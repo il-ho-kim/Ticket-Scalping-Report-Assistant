@@ -1,0 +1,15 @@
+{
+  "capturedAt": "2026-10-08T15:31",
+  "fields": {
+    "titleInput": { "includes": "BLUE HOUR" },
+    "showDateInput": "2026-12-13T19:00",
+    "postDateInput": "2026-10-08T15:24",
+    "venueInput": { "includes": "벡스코" },
+    "seatInput": { "includes": "R구역" },
+    "officialPriceInput": "143000",
+    "saleInput": "280000",
+    "sellerInput": "@ticket_yangdo_24",
+    "platform": "SNS",
+    "vendor": "티켓링크"
+  }
+}
