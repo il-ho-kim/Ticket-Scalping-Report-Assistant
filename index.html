@@ -111,10 +111,8 @@
   .field-flag{ font-size:10px; display:flex; align-items:center; gap:3px; white-space:nowrap; flex-shrink:0; }
   .field-label{ min-width:0; }
   .field-flag.auto{ color:var(--good); }
-  .field-flag.need{ color:var(--need); }
   .input, select.input, textarea.input{ border:1.5px solid var(--border); border-radius:8px; padding:10px 11px; font-size:13.5px; background:var(--surface); color:var(--text); font-family:inherit; width:100%; }
   .input.autofilled{ border-color:var(--good); background:color-mix(in srgb, var(--good-bg) 55%, var(--surface)); }
-  .input.guessfilled{ border-color:var(--need); background:color-mix(in srgb, var(--need-bg) 55%, var(--surface)); }
   textarea.input{ resize:vertical; line-height:1.55; }
   .route-card{ border:1.5px solid var(--border); border-radius:12px; background:var(--surface-2); padding:11px 13px; display:flex; flex-direction:column; gap:4px; }
   .route-label{ font-size:10.5px; color:var(--muted); }
@@ -475,6 +473,8 @@
 
 <div id="toast"></div>
 
+<script src="js/parse.js"></script>
+<script src="js/ocr.js"></script>
 <script>
 (function(){
   "use strict";
@@ -591,16 +591,22 @@
   // ---------- step 4: evidence ----------
   var sampleAPI = null, imageLimits = null, sampleDebug = "";
   var sampleStatus = "checking"; // "checking" | "no_claude" | "no_sample" | "no_images" | "limits_error" | "ready"
-  // 자동 인식은 환경에 따라 아래 3가지 경로 중 가능한 것으로 자동 전환된다.
-  //   image : 캡처 이미지를 Claude가 읽음 (가장 정확)
+  // 자동 인식은 환경에 따라 아래 경로 중 가능한 것으로 자동 전환된다.
+  //   image : 캡처 이미지를 Claude가 읽음 (claude.ai 안에서만)
+  //   ocr   : 캡처 글자를 이 기기 안에서 읽고(js/ocr.js) 내장 규칙으로 해석 (일반 웹의 기본 경로)
   //   text  : 붙여넣은 글을 Claude가 읽음 (이미지 미지원 환경)
-  //   local : 붙여넣은 글을 페이지 내장 규칙으로 해석 (Claude 자체가 없는 환경 — 항상 동작)
+  //   local : 붙여넣은 글을 페이지 내장 규칙으로 해석 (항상 동작)
   var ROUTE_INFO = {
     image: ["캡처 이미지 읽기", "올린 캡처를 그대로 읽어 채워요. 게시글 내용을 함께 붙여넣으면 더 정확해져요."],
+    ocr:   ["캡처 글자 읽기", "올린 캡처의 글자를 이 기기 안에서 읽어 채워요. 캡처는 밖으로 전송되지 않아요. 게시글 내용을 함께 붙여넣으면 더 정확해져요."],
     text:  ["붙여넣은 글 읽기", "이 화면은 캡처 인식을 지원하지 않아, 붙여넣은 글에서 정보를 찾아 채워요."],
-    local: ["붙여넣은 글에서 직접 찾기", "이 화면은 Claude 기능을 쓸 수 없어, 페이지에 내장된 규칙으로 가격·일시·장소 등을 찾아 채워요. 추정값이라 꼭 확인이 필요해요."],
+    local: ["붙여넣은 글에서 직접 찾기", "페이지에 내장된 규칙으로 붙여넣은 글에서 가격·일시·장소 등을 찾아 채워요."],
     checking: ["확인 중이에요...", "가장 정확한 방식을 고르는 중이에요. 그동안 캡처를 올리거나 내용을 붙여넣어주세요."]
   };
+  var ocrStatus = window.TicketOCR ? "idle" : "missing";   // "idle" | "running" | "done" | "failed" | "missing"
+  var ocrDebug = "", lastOcrText = "";
+  // 불러오기에 한 번 실패해도(오프라인 등) 다음에 누르면 다시 시도한다.
+  function ocrAvailable(){ return ocrStatus !== "missing"; }
   function initSample(){
     sampleStatus = "checking";
     sampleAPI = null; imageLimits = null; sampleDebug = "";
@@ -639,7 +645,8 @@
       ? imageLimits.images.mediaTypes.join(",")
       : "image/*";
     var retry = $("#sampleRetryBtn");
-    if (retry) retry.hidden = (sampleStatus === "checking" || sampleStatus === "ready");
+    // Claude 런타임이 아예 없는 일반 웹에서는 다시 확인해도 소용이 없으니 숨긴다.
+    if (retry) retry.hidden = (sampleStatus === "checking" || sampleStatus === "ready" || sampleStatus === "no_claude");
     if (sampleDebug) console.log("[암표 신고 준비 도우미] sample 상태:", sampleStatus, "-", sampleDebug);
     renderDiag();
     refreshExtractBtn();
@@ -656,10 +663,11 @@
       "limits() 응답    : " + (imageLimits ? JSON.stringify(imageLimits) : "없음"),
       "images 지원     : " + (imageLimits && imageLimits.images ? "예" : "아니오"),
       "상세            : " + (sampleDebug || "-"),
+      "캡처 글자 인식   : " + ocrStatus + (ocrDebug ? " — " + ocrDebug : ""),
       "프레임 안       : " + (window.top !== window.self ? "예" : "아니오"),
       "화면 폭         : " + window.innerWidth + "px",
       "UA              : " + navigator.userAgent
-    ].join("\n");
+    ].join("\n") + (lastOcrText ? "\n\n[캡처에서 읽은 글자]\n" + lastOcrText.slice(0, 2000) : "");
   }
   $("#copyDiag").addEventListener("click", function(){ copyText($("#diagText").textContent); });
   function maxImagesPerCall(){
@@ -669,10 +677,10 @@
   function pastedText(){ var el = $("#pasteText"); return el ? el.value.trim() : ""; }
   // 이 화면에서 쓸 수 있는 '가장 좋은' 경로. 입력이 없어도 경로 자체는 정해진다.
   function bestRoute(){
-    if (!sampleAPI) return sampleStatus === "checking" ? "checking" : "local";
     if (sampleStatus === "checking") return "checking";
-    if (sampleStatus === "ready") return "image";
-    return "text";   // sample은 되는데 이미지만 안 되는 환경
+    if (sampleAPI && sampleStatus === "ready") return "image";
+    if (ocrAvailable()) return "ocr";
+    return sampleAPI ? "text" : "local";   // text: sample은 되는데 이미지만 안 되는 환경
   }
   // 지금 눌렀을 때 실제로 실행될 경로 (가진 입력에 따라 내려감)
   function activeRoute(){
@@ -680,9 +688,10 @@
     var hasImg = state.files.length > 0;
     var best = bestRoute();
     if (best === "image" && hasImg) return "image";
-    if (sampleAPI && hasText) return "text";
-    // 아직 확인 중이면 성급히 내장 파서로 내려가지 않고 잠깐 기다린다 (최대 10초 안에 결론이 난다)
+    // 아직 확인 중이면 성급히 다른 경로로 내려가지 않고 잠깐 기다린다 (최대 10초 안에 결론이 난다)
     if (best === "checking" && (hasText || hasImg)) return "wait";
+    if (hasImg && ocrAvailable()) return "ocr";
+    if (sampleAPI && hasText) return "text";
     if (hasText) return "local";
     return null;
   }
@@ -702,7 +711,7 @@
     btn.hidden = false;
     btn.disabled = maskSaving || extracting || route === null || route === "wait";
     var label = "캡처를 올리거나 게시글 내용을 붙여넣어주세요";
-    if (route === "image") label = "캡처에서 자동으로 읽기";
+    if (route === "image" || route === "ocr") label = "캡처에서 자동으로 읽기";
     else if (route === "text") label = "붙여넣은 내용에서 자동으로 읽기";
     else if (route === "local") label = "붙여넣은 내용에서 찾아보기";
     else if (route === "wait") label = "자동 인식 방식 확인 중이에요...";
@@ -768,6 +777,7 @@
     var handedOff = false;   // 다른 경로로 넘긴 경우, 이 호출의 finally가 버튼을 되살리면 안 된다
     $("#extractBtn").disabled = true;
     if (route === "local"){ extracting = false; runLocal("붙여넣은 내용에서 찾았어요."); refreshExtractBtn(); return; }
+    if (route === "ocr"){ runOcr(); return; }
 
     var text = pastedText();
     var prompt, opts = { modelTier: "quick" };
@@ -788,12 +798,22 @@
 
     sampleAPI.json(prompt, opts)
       .then(function(data){
-        applyExtraction(data || {}, "ai");
+        applyExtraction(data || {}, route === "image" ? "capture" : "text");
         $("#extractStatus").textContent = "읽어냈어요. 틀린 부분은 고쳐주세요.";
       })
       .catch(function(err){
         var code = err && err.code;
-        // 이미지 경로가 막히면 텍스트 경로로, 그것도 막히면 내장 파서로 자동 강등한다.
+        var hard = (code === "not_granted" || code === "sampling_disabled" || code === "not_declared" ||
+                    code === "capability_disabled" || code === "capability_removed" || code === "images_unavailable");
+        // 이미지 경로가 막히면 이 기기 안의 글자 인식(OCR)으로, 그다음 텍스트 경로로, 그것도 막히면 내장 파서로 자동 강등한다.
+        if (route === "image" && (hard || code === "image_rejected") && ocrAvailable() && state.files.length > 0){
+          sampleStatus = "no_images";
+          if (hard) sampleAPI = null;
+          handedOff = true;
+          extracting = false;
+          runExtraction();
+          return;
+        }
         if (route === "image" && (code === "images_unavailable" || code === "image_rejected") && pastedText().length >= 10){
           sampleStatus = "no_images";
           $("#extractStatus").textContent = "캡처 인식이 막혀 있어, 붙여넣은 내용으로 다시 시도할게요...";
@@ -802,8 +822,6 @@
           runExtraction();
           return;
         }
-        var hard = (code === "not_granted" || code === "sampling_disabled" || code === "not_declared" ||
-                    code === "capability_disabled" || code === "capability_removed" || code === "images_unavailable");
         if (hard) sampleAPI = null;   // 이 화면에서는 더 이상 Claude를 부르지 않는다
         if (pastedText().length >= 10){
           runLocal(hard
@@ -826,13 +844,63 @@
   }
 
   function runLocal(prefix){
-    var found = applyExtraction(localParse(pastedText()), "local");
+    var found = applyExtraction(localParse(pastedText()), "text");
     $("#extractStatus").textContent = found
-      ? (prefix + " 추정값이라 꼭 확인해주세요.")
+      ? (prefix + " 틀린 부분은 고쳐주세요.")
       : "붙여넣은 내용에서는 알아볼 수 있는 값을 찾지 못했어요 — 아래 항목을 직접 입력해주세요.";
   }
+
+  function ocrProgressText(p){
+    var pct = Math.round((p.progress || 0) * 100);
+    var tail = (pct > 0 && pct < 100 ? " " + pct + "%" : "") + "...";
+    if (p.phase === "prepare") return "글자 인식을 준비하는 중이에요 (처음 한 번은 조금 걸려요)" + tail;
+    return (p.total > 1 ? "캡처 " + (p.index + 1) + "/" + p.total + " 읽는 중이에요" : "캡처를 읽는 중이에요") + tail;
+  }
+  // 캡처 글자 인식(js/ocr.js) → 내장 파서. 캡처는 이 기기 밖으로 나가지 않는다.
+  function runOcr(){
+    var files = state.files.map(function(f){ return f.file; });
+    var text = pastedText();
+    ocrStatus = "running"; ocrDebug = "";
+    $("#extractStatus").textContent = ocrProgressText({ phase: "prepare" });
+    window.TicketOCR.recognize(files, function(p){ $("#extractStatus").textContent = ocrProgressText(p); })
+      .then(function(results){
+        ocrStatus = "done";
+        lastOcrText = results.map(function(r, i){ return "(" + (i + 1) + ") " + r.text.trim(); }).join("\n\n");
+        // 캡처마다 따로 해석해야 "3시간 전" 같은 상대 시각을 그 캡처를 찍은 시각 기준으로 풀 수 있다.
+        // 여러 장에서 같은 항목이 나오면 앞의 캡처 값을 쓴다.
+        var merged = {};
+        results.forEach(function(r){
+          var d = localParse(r.text, { now: new Date(r.lastModified) });
+          Object.keys(d).forEach(function(k){ if (merged[k] == null) merged[k] = d[k]; });
+        });
+        var found = applyExtraction(merged, "capture");
+        // 붙여넣은 글에는 글자 인식 오류가 없으니, 같은 항목은 그 값으로 덮는다.
+        if (text.length >= 10){
+          var now = new Date(results.length ? results[0].lastModified : Date.now());
+          if (applyExtraction(localParse(text, { now: now }), "text")) found = true;
+        }
+        $("#extractStatus").textContent = found
+          ? "캡처에서 읽어 채웠어요. 틀린 부분은 고쳐주세요."
+          : "캡처에서 알아볼 수 있는 값을 찾지 못했어요 — 아래 항목을 직접 입력해주세요.";
+      })
+      .catch(function(err){
+        // 라이브러리·글자 데이터를 받지 못한 경우(오프라인, CDN 차단 등). 다음에 누르면 다시 시도한다.
+        ocrStatus = "failed";
+        ocrDebug = (err && err.message) || String(err);
+        console.error("[암표 신고 준비 도우미] 캡처 글자 인식 실패:", err);
+        if (text.length >= 10) runLocal("캡처 글자 인식을 불러오지 못해, 붙여넣은 내용에서 찾았어요.");
+        else $("#extractStatus").textContent = "캡처 글자 인식을 불러오지 못했어요. 인터넷 연결을 확인하고 다시 눌러주시거나, 게시글 내용을 붙여넣어주세요.";
+      })
+      .finally(function(){ extracting = false; renderDiag(); refreshExtractBtn(); });
+  }
+
   state.touched = {};
-  // source: "ai" (Claude가 읽음) | "local" (페이지 내장 규칙이 찾음)
+  // 자동으로 채운 값의 출처. "capture": 캡처에서 읽음 (Claude 또는 글자 인식) | "text": 붙여넣은 글에서 읽음
+  var SOURCE_LABEL = { capture: "캡처에서 읽음", text: "글에서 읽음" };
+  function setFlag(el, src){
+    el.textContent = SOURCE_LABEL[src] || "";
+    el.className = "field-flag" + (SOURCE_LABEL[src] ? " auto" : "");
+  }
   function setAuto(id, value, source){
     if (value==null || value==="") return false;
     if (state.touched[id]) return false; // 사용자가 고친 값은 덮지 않는다
@@ -863,13 +931,9 @@
     var f = document.getElementById("flag-"+id);
     if (!f) return;
     var src = state.autoFilled[id];
-    f.textContent = src === "ai" ? "자동 인식됨" : (src === "local" ? "추정 · 확인" : "");
-    f.className = "field-flag" + (src === "ai" ? " auto" : (src === "local" ? " need" : ""));
+    setFlag(f, src);
     var input = document.getElementById(id);
-    if (input){
-      input.classList.toggle("autofilled", src === "ai");
-      input.classList.toggle("guessfilled", src === "local");
-    }
+    if (input) input.classList.toggle("autofilled", !!src);
   }
   ["titleInput","saleInput","sellerInput","urlInput","postDateInput","officialPriceInput","showDateInput","venueInput","seatInput"].forEach(function(id){
     var el = document.getElementById(id);
@@ -880,14 +944,12 @@
     state.platform = name;
     $all("#platformChips .chip").forEach(function(c){
       c.classList.toggle("picked", c.dataset.platform===name);
-      c.classList.toggle("manual-pick", c.dataset.platform===name && source !== "ai");
+      c.classList.toggle("manual-pick", c.dataset.platform===name && !source);
     });
     $("#platformOtherInput").hidden = name !== "기타";
     if (!source) state.touched.platform = true;
     state.autoFilled["platform"] = source || undefined;
-    var f = $("#flag-platform");
-    f.textContent = source === "ai" ? "자동 인식됨" : (source === "local" ? "추정 · 확인" : "");
-    f.className = "field-flag" + (source === "ai" ? " auto" : (source === "local" ? " need" : ""));
+    setFlag($("#flag-platform"), source);
     updateFooter();
   }
   $("#platformChips").addEventListener("click", function(e){
@@ -901,14 +963,12 @@
     state.vendor = name;
     $all("#vendorChips .chip").forEach(function(c){
       c.classList.toggle("picked", c.dataset.vendor===name);
-      c.classList.toggle("manual-pick", c.dataset.vendor===name && source !== "ai");
+      c.classList.toggle("manual-pick", c.dataset.vendor===name && !source);
     });
     $("#vendorOtherInput").hidden = name !== "기타";
     if (!source) state.touched.vendor = true;
     state.autoFilled["vendor"] = source || undefined;
-    var f = $("#flag-vendor");
-    f.textContent = source === "ai" ? "자동 인식됨" : (source === "local" ? "추정 · 확인" : "");
-    f.className = "field-flag" + (source === "ai" ? " auto" : (source === "local" ? " need" : ""));
+    setFlag($("#flag-vendor"), source);
     updateFooter();
   }
   $("#vendorChips").addEventListener("click", function(e){
@@ -928,172 +988,8 @@
     return true;
   }
 
-  // ---------- 내장 파서 (Claude 없이도 동작하는 최후 경로) ----------
-  var VENUE_SUFFIX = "아레나|체육관|경기장|스타디움|돔|아트홀|콘서트홀|아트센터|문화회관|예술의전당|월드컵경기장|홀|극장|센터";
-  var PLATFORM_HINTS = [
-    ["중고나라", /중고나라|joonggonara/i],
-    ["번개장터", /번개장터|번장|bunjang/i],
-    ["당근마켓", /당근마켓|당근/],
-    ["티켓베이", /티켓베이|ticketbay/i],
-    ["SNS", /트위터|twitter|엑스\(x\)|인스타|instagram|디엠|\bDM\b|카톡|오픈채팅/i]
-  ];
-  var VENDOR_HINTS = [
-    ["NOL티켓", /NOL\s*티켓|인터파크|interpark/i],
-    ["YES24", /yes\s*24|예스\s*24/i],
-    ["티켓링크", /티켓링크|ticketlink/i],
-    ["멜론티켓", /멜론\s*티켓|melon\s*ticket/i],
-    ["쿠팡플레이", /쿠팡\s*플레이|coupang\s*play/i]
-  ];
-
-  function wonToNumber(raw){
-    var s = String(raw).replace(/\s/g, "");
-    var man = /만$/.test(s);
-    s = s.replace(/만$/, "");
-    s = man ? s.replace(/,/g, "") : s.replace(/[,\.]/g, "");
-    if (!/^\d+(\.\d+)?$/.test(s)) return null;
-    var v = parseFloat(s);
-    if (man) v = v * 10000;
-    if (!isFinite(v) || v < 1000) return null;   // 1,000원 미만은 좌석번호·수량 등 오인일 가능성이 높다
-    return Math.round(v);
-  }
-  function pad2(x){ return String(x).padStart(2, "0"); }
-  function buildDateTime(y, mo, d, hh, mm){
-    if (!y || !mo || !d) return null;
-    mo = Number(mo); d = Number(d);
-    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-    var time = "";
-    if (hh != null){
-      hh = Number(hh); mm = mm == null ? 0 : Number(mm);
-      if (hh > 23 || mm > 59) return null;
-      time = "T" + pad2(hh) + ":" + pad2(mm);
-    } else {
-      time = "T00:00";
-    }
-    return y + "-" + pad2(mo) + "-" + pad2(d) + time;
-  }
-  function findDateTime(t){
-    var y = null, mo = null, d = null;
-    var m = /(20\d{2})\s*[.\-\/년]\s*(\d{1,2})\s*[.\-\/월]\s*(\d{1,2})/.exec(t);
-    if (m){ y = m[1]; mo = m[2]; d = m[3]; }
-    else {
-      var m2 = /(\d{1,2})\s*월\s*(\d{1,2})\s*일/.exec(t);
-      if (m2){ y = String(new Date().getFullYear()); mo = m2[1]; d = m2[2]; }
-    }
-    if (!y) return null;
-    var hh = null, mm = null;
-    var tail = t.slice(Math.max(0, (m ? m.index : 0)));
-    var mt = /(오전|오후)?\s*(\d{1,2})\s*(?::|시)\s*(\d{2})?/.exec(tail);
-    if (mt){
-      hh = Number(mt[2]);
-      mm = mt[3] != null ? Number(mt[3]) : 0;
-      if (mt[1] === "오후" && hh < 12) hh += 12;
-      if (mt[1] === "오전" && hh === 12) hh = 0;
-      if (hh > 23) { hh = null; mm = null; }
-    }
-    return buildDateTime(y, mo, d, hh, mm);
-  }
-  function labelledWon(t, labelRe){
-    var re = new RegExp(labelRe.source + "[^0-9]{0,8}([0-9][0-9,\\.]*\\s*만?)\\s*원?", "i");
-    var m = re.exec(t);
-    return m ? wonToNumber(m[1]) : null;
-  }
-  var KNOWN_NAMES = ["중고나라","번개장터","당근마켓","당근","티켓베이","SNS","NOL티켓","YES24","티켓링크","멜론티켓","쿠팡플레이","인터파크","티켓","양도","판매"];
-  // 장소: 접미사(아레나·체육관·돔 등)를 찾은 뒤 왼쪽으로 한글/영문만 이어붙인다.
-  // 숫자·시각·조사에서 끊기므로 "8시 고척스카이돔" 같은 오염이 생기지 않는다.
-  function findVenue(text){
-    var re = new RegExp("(?:" + VENUE_SUFFIX + ")");
-    var t = String(text), guard = 0;
-    while (guard++ < 40){
-      var m = re.exec(t);
-      if (!m) return null;
-      var end = m.index + m[0].length;
-      var i = m.index;
-      while (i > 0 && /[가-힣A-Za-z]/.test(t.charAt(i - 1))) i--;
-      var core = t.slice(i, end).trim();
-      if (core.length >= 2){
-        if (core.length <= 4){
-          // 접미사 단어만 남은 경우(체육관·아레나 등) 바로 앞 단어를 하나 붙인다
-          var mb = /([가-힣A-Za-z][가-힣A-Za-z]{1,14})\s$/.exec(t.slice(Math.max(0, i - 24), i));
-          if (mb) core = mb[1] + " " + core;
-        }
-        if (core.replace(/\s/g, "").length >= 3) return core;
-      }
-      t = t.slice(end);
-    }
-    return null;
-  }
-  function isKnownName(c){
-    var s = String(c).replace(/\s/g, "");
-    return KNOWN_NAMES.indexOf(s) !== -1;
-  }
-  function tidyTitle(line){
-    return line
-      .replace(/^\s*[\[\(【][^\]\)】\n]{1,14}[\]\)】]\s*/, "")   // 앞머리 말머리표 [중고나라] 등
-      .replace(/^[\s\-·•#]+/, "")
-      .replace(/\s*(?:양도합니다|판매합니다|양도해요|판매해요|양도|판매|팝니다|팔아요|구합니다|구해요)\s*[.!~]*\s*$/, "")
-      .trim()
-      .slice(0, 60);
-  }
-  function findTitle(text){
-    var re = /['"“”‘’『「\[]([^'"“”‘’』」\]\n]{2,40})['"“”‘’』」\]]/g, m;
-    while ((m = re.exec(text))){
-      var c = m[1].trim();
-      if (isKnownName(c) || /^\d+$/.test(c)) continue;
-      if (c.length >= 2) return c.slice(0, 60);
-    }
-    var lines = String(text).split(/\n+/);
-    for (var i = 0; i < lines.length; i++){
-      var line = lines[i];
-      if (!/콘서트|투어|페스티벌|뮤지컬|내한|팬미팅|리사이틀|오페라|단독공연/.test(line)) continue;
-      if (/\d{1,2}\s*[:시]/.test(line) || /20\d{2}\s*[.\-\/년]/.test(line)) continue;   // 날짜·시각 줄은 제목이 아니다
-      var t2 = tidyTitle(line);
-      if (t2.length >= 2) return t2;
-    }
-    return null;
-  }
-  function localParse(text){
-    var out = {};
-    if (!text) return out;
-    var t = String(text).replace(/ /g, " ");
-
-    var mUrl = t.match(/https?:\/\/[^\s"'<>()]+/);
-    if (mUrl) out.url = mUrl[0];
-
-    var mAt = t.match(/@[A-Za-z0-9_.\-]{2,30}/);
-    if (mAt) out.sellerHandle = mAt[0];
-
-    out.officialPrice = labelledWon(t, /(?:정가|원가|공식\s*판매가|티켓\s*정가|티켓값)/);
-    out.price = labelledWon(t, /(?:판매\s*가격|판매가|양도가|희망가|거래가|가격)/);
-    if (out.price == null || out.officialPrice == null){
-      var all = [], re = /([0-9][0-9,\.]*\s*만?)\s*원/g, m;
-      while ((m = re.exec(t))){ var v = wonToNumber(m[1]); if (v) all.push(v); }
-      all = all.filter(function(v, i, a){ return a.indexOf(v) === i; }).sort(function(a, b){ return a - b; });
-      if (all.length === 1 && out.price == null) out.price = all[0];
-      else if (all.length >= 2){
-        // 웃돈 거래는 보통 '정가 < 판매가'. 라벨이 없을 때만 최소·최대로 추정한다.
-        if (out.price == null) out.price = all[all.length - 1];
-        if (out.officialPrice == null && all[0] !== out.price) out.officialPrice = all[0];
-      }
-    }
-
-    var dt = findDateTime(t);
-    if (dt) out.showDate = dt;
-
-    var venue = findVenue(t);
-    if (venue) out.venue = venue;
-
-    var ms = /([0-9A-Za-z가-힣]{1,8}\s*(?:구역|블록|층)\s*[0-9]{1,3}\s*열\s*[0-9]{1,3}\s*번?)/.exec(t)
-          || /([0-9]{1,3}\s*열\s*[0-9]{1,3}\s*번)/.exec(t);
-    if (ms) out.seat = ms[1].replace(/\s+/g, " ").trim();
-
-    var title = findTitle(t);
-    if (title) out.title = title;
-
-    for (var a = 0; a < PLATFORM_HINTS.length; a++){ if (PLATFORM_HINTS[a][1].test(t)){ out.platform = PLATFORM_HINTS[a][0]; break; } }
-    for (var b = 0; b < VENDOR_HINTS.length; b++){ if (VENDOR_HINTS[b][1].test(t)){ out.vendor = VENDOR_HINTS[b][0]; break; } }
-
-    return out;
-  }
+  // ---------- 내장 파서 (js/parse.js) — 붙여넣은 글과 OCR로 읽은 캡처 글자를 해석한다 ----------
+  function localParse(text, opts){ return window.TicketParse.localParse(text, opts); }
 
   // ---------- masking ----------
   var maskCtx, maskingId = null, drawing = false;
@@ -1200,8 +1096,8 @@
     var card = $("#summaryCard"); card.innerHTML = "";
     rows.forEach(function(r){
       var row = document.createElement("div"); row.className = "row";
-      var tagCls = r.src === "ai" ? "auto" : "manual";
-      var tagTxt = r.src === "ai" ? "자동" : (r.src === "local" ? "추정 · 확인필요" : "직접입력");
+      var tagCls = r.src ? "auto" : "manual";
+      var tagTxt = r.src ? "자동" : "직접입력";
       var tagHtml = r.noTag ? "" : ' <span class="tag '+tagCls+'">'+tagTxt+'</span>';
       row.innerHTML =
         '<div class="row-text"><span class="row-label">'+r.label+tagHtml+'</span>' +
