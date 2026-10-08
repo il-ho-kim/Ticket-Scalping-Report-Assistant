@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-08T10:05",
+  "fields": {
+    "titleInput": "별의 정원",
+    "showDateInput": "2026-12-05T14:00",
+    "postDateInput": "2026-10-07T21:34",
+    "venueInput": { "includes": "마스터카드홀" },
+    "seatInput": { "includes": "3열 15번" },
+    "officialPriceInput": "170000",
+    "saleInput": "300000",
+    "platform": "중고나라",
+    "vendor": "YES24"
+  }
+}

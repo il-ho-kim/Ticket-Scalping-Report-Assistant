@@ -1,0 +1,14 @@
+{
+  "capturedAt": "2026-10-08T14:17",
+  "fields": {
+    "titleInput": { "includes": "BLUE HOUR" },
+    "showDateInput": "2026-11-22T18:00",
+    "postDateInput": "2026-10-06T14:17",
+    "venueInput": "고척스카이돔",
+    "seatInput": { "includes": "B블록 5열 11번" },
+    "officialPriceInput": "132000",
+    "saleInput": "220000",
+    "platform": "당근마켓",
+    "vendor": "티켓링크"
+  }
+}

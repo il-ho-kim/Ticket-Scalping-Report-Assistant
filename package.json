@@ -1,0 +1,16 @@
+{
+  "name": "ticket-scalping-report-assistant",
+  "private": true,
+  "description": "암표 신고 준비 도우미",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "node tests/ocr-e2e.mjs",
+    "fixtures": "node tests/make-fixtures.mjs"
+  },
+  "devDependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/kor": "1.0.0",
+    "playwright": "1.56.1",
+    "tesseract.js": "7.0.0"
+  }
+}

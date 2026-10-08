@@ -1,0 +1,20 @@
+/* 합성 캡처용 공통 스타일 — 390×844 휴대폰 화면을 흉내 낸다. 실제 서비스 화면과는 다른 가짜 화면이다. */
+@font-face{ font-family:'Pretendard'; font-weight:400; src:url(../../../fonts/Pretendard-Regular.woff2) format('woff2'); }
+@font-face{ font-family:'Pretendard'; font-weight:700; src:url(../../../fonts/Pretendard-Bold.woff2) format('woff2'); }
+*{ box-sizing:border-box; }
+html,body{ margin:0; width:390px; height:844px; overflow:hidden; }
+body{ font-family:'Pretendard', sans-serif; background:#fff; color:#1a1a1a; font-size:15px; line-height:1.5; }
+.status{ display:flex; justify-content:space-between; align-items:center; height:44px; padding:0 22px; font-weight:700; font-size:15px; }
+.status .icons{ font-size:12px; letter-spacing:1px; }
+.appbar{ display:flex; align-items:center; gap:12px; height:48px; padding:0 16px; border-bottom:1px solid #eee; font-size:17px; font-weight:700; }
+.photo{ height:220px; background:linear-gradient(135deg,#d9d4ca,#bdb6aa); }
+.pad{ padding:14px 16px; }
+.muted{ color:#8a8a8a; font-size:13px; }
+.price{ font-size:24px; font-weight:700; }
+.title{ font-size:18px; font-weight:700; margin:4px 0; }
+.body{ white-space:pre-line; font-size:15px; }
+.bottom{ position:absolute; left:0; right:0; bottom:0; height:72px; border-top:1px solid #eee; display:flex; align-items:center; justify-content:space-between; padding:0 16px; background:#fff; }
+.btn{ background:#ff5a1f; color:#fff; padding:10px 22px; border-radius:8px; font-weight:700; }
+.row{ display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid #f0f0f0; font-size:15px; }
+.row .k{ color:#777; }
+.row .v{ font-weight:700; text-align:right; max-width:230px; }

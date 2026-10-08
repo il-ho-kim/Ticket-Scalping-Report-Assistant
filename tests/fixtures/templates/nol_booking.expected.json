@@ -1,0 +1,12 @@
+{
+  "capturedAt": "2026-10-08T09:12",
+  "fields": {
+    "titleInput": { "includes": "BLUE HOUR" },
+    "showDateInput": "2026-11-22T18:00",
+    "venueInput": "고척스카이돔",
+    "seatInput": { "includes": "A구역 12열 7번" },
+    "officialPriceInput": "154000",
+    "saleInput": "",
+    "vendor": "NOL티켓"
+  }
+}
