@@ -87,6 +87,19 @@ test("입력값 비교: 공연 기간 밖 날짜면 공식 회차를 고를 수 
   assert.equal(empty.options.length, 2);
 });
 
+test("실제 KOPIS 값: 겹친 괄호 공연장 이름, 운영사 이름 예매처", () => {
+  assert.equal(M.venueName("큐씨어터(구. 수상한흥신소전용관) (큐씨어터(구. 수상한흥신소전용관))"), "큐씨어터(구. 수상한흥신소전용관)");
+  assert.equal(M.venueName("소극장 플랫폼74 (소극장 플랫폼74)"), "소극장 플랫폼74");
+  assert.equal(M.venueName("세종문화회관 (세종문화회관 대극장)"), "세종문화회관 대극장");
+  assert.equal(M.venueName("블루스퀘어 (마스터카드홀)"), "블루스퀘어 마스터카드홀");
+  assert.equal(M.venueName("예술의전당"), "예술의전당");
+  assert.equal(M.appVendor("놀유니버스"), "NOL티켓");
+  assert.equal(M.appVendor("NHN티켓링크"), "티켓링크");
+  // 실제 응답(2026-10-15, 「여기에는 생각보다 뭐가 많다」)의 공연 시간 문구
+  assert.deepEqual(M.parseTimes("목요일 ~ 금요일(19:30), 토요일(15:00,19:30), 일요일(15:00)"),
+    [{ days: [4, 5], times: ["19:30"] }, { days: [6], times: ["15:00", "19:30"] }, { days: [0], times: ["15:00"] }]);
+});
+
 test("예매처·좌석 등급 맞추기", () => {
   assert.equal(M.appVendor("인터파크티켓"), "NOL티켓");
   assert.equal(M.appVendor("예스24"), "YES24");
