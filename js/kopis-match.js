@@ -154,9 +154,15 @@
   // KOPIS 공연장 이름은 "세종문화회관 (세종문화회관 대극장)"처럼 시설명 (공연장명)으로 오기도 한다 → 한 이름으로 줄인다
   function venueName(v){
     v = String(v || "").trim();
-    var m = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(v);
-    if (!m) return v;
-    var outer = m[1].trim(), inner = m[2].trim();
+    if (v.slice(-1) !== ")") return v;
+    // 끝의 괄호와 짝이 맞는 여는 괄호를 찾는다 (이름 안에 괄호가 또 있을 수 있다: "큐씨어터(구. ○○) (큐씨어터(구. ○○))")
+    var depth = 0, open = -1;
+    for (var i = v.length - 1; i >= 0; i--){
+      if (v[i] === ")") depth++;
+      else if (v[i] === "(" && --depth === 0){ open = i; break; }
+    }
+    if (open < 0) return v;
+    var outer = v.slice(0, open).trim(), inner = v.slice(open + 1, -1).trim();
     if (!outer) return inner;
     if (norm(inner).indexOf(norm(outer)) !== -1) return inner;
     if (norm(outer).indexOf(norm(inner)) !== -1) return outer;
@@ -188,7 +194,7 @@
   }
   // KOPIS 예매처 이름 → 앱의 예매처 칩
   var VENDOR_RULES = [
-    ["NOL티켓", /NOL|인터파크|interpark/i],
+    ["NOL티켓", /NOL|놀\s*유니버스|인터파크|interpark/i],   // KOPIS는 NOL티켓을 운영사 이름 "놀유니버스"로 적기도 한다
     ["YES24", /yes\s*24|예스\s*24/i],
     ["티켓링크", /티켓링크|ticketlink/i],
     ["멜론티켓", /멜론|melon/i],
