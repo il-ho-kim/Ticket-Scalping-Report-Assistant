@@ -7,6 +7,7 @@ import http from "node:http";
 import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
 import { join, dirname, extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtures = join(root, "tests/fixtures");
@@ -16,9 +17,25 @@ mkdirSync(outDir, { recursive: true });
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2",
   ".wasm": "application/wasm", ".gz": "application/gzip", ".png": "image/png", ".jpg": "image/jpeg", ".json": "application/json" };
 
+// /api/kopis: 실제 서버 함수(api/kopis.js)를 쓰되, KOPIS 대신 tests/fixtures/kopis/*.xml 가짜 응답을 돌려준다
+const require = createRequire(import.meta.url);
+const { createHandler } = require("../api/kopis.js");
+const kopisHandler = createHandler({
+  getKey: () => "E2E",
+  fetch: async (url) => {
+    const u = new URL(url);
+    let name = null;
+    if (u.pathname.endsWith("/pblprfr")) name = /BLUE/i.test(u.searchParams.get("shprfnm") || "") ? "list-blue-hour.xml" : null;
+    else name = `detail-${u.pathname.split("/").pop()}.xml`;
+    const f = name && join(fixtures, "kopis", name);
+    return { ok: true, status: 200, text: async () => (f && existsSync(f) ? readFileSync(f, "utf8") : "<dbs></dbs>") };
+  }
+});
+
 // ---------- 정적 서버 ----------
 const server = http.createServer((req, res) => {
   let path = decodeURIComponent(new URL(req.url, "http://x").pathname);
+  if (path === "/api/kopis") return kopisHandler(req, res);
   // 언어 데이터는 언어별 패키지에 나뉘어 있어 한 경로로 모아 준다: /__lang/kor.traineddata.gz
   const lang = /^\/__lang\/(\w+)\.traineddata\.gz$/.exec(path);
   const file = lang
@@ -142,6 +159,55 @@ for (const c of cases) {
     console.log(`  ${okFlow ? "✓" : "✗"} 5·6단계: 초안 ${draft.length}자, 북마크릿 ${href.length}자`);
     if (!okFlow) gateFailures++;
   }
+  await page.close();
+}
+
+// 공식 정보(KOPIS) 확인: 캡처 읽기 → 자동으로 찾기 → 다른 항목 [바꾸기] → '공식 정보로 고침' 표시
+{
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.goto(base + "/index.html");
+  await page.click("#primaryBtn"); await page.click("#optConcert"); await page.click("#primaryBtn"); await page.click("#primaryBtn");
+  const b64 = readFileSync(join(fixtures, "captures", "bunjang.png")).toString("base64");
+  await page.evaluate(({ b64 }) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "bunjang.png", { type: "image/png", lastModified: new Date("2026-10-08T15:00").getTime() }));
+    const input = document.getElementById("fileInput"); input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, { b64 });
+  await page.waitForFunction(() => !document.getElementById("extractBtn").disabled);
+  await page.click("#extractBtn");
+  // 서울·부산 두 후보 중 공연일(11/22)이 기간 안에 드는 서울 공연이 바로 골라져 비교가 나와야 한다
+  await page.waitForSelector("#kopisCompare:not([hidden]) .kopis-row", { timeout: 180000 });
+  const before = await page.evaluate(() => ({
+    status: document.getElementById("kopisStatus").textContent,
+    cands: document.querySelectorAll("#kopisCandidates .kopis-cand").length,
+    picked: (document.querySelector(".kopis-cand.picked") || {}).textContent || "",
+    rows: Array.from(document.querySelectorAll(".kopis-row")).map((r) => r.querySelector(".kopis-label").textContent + ":" + (r.querySelector(".kopis-same") ? "같음" : "다름"))
+  }));
+  await page.screenshot({ path: join(outDir, "kopis-card.png"), fullPage: true });
+  // 공연명 [바꾸기]
+  await page.click(".kopis-row:has(.kopis-label:text-is('공연명')) .kopis-apply");
+  const afterTitle = await page.evaluate(() => ({ title: document.getElementById("titleInput").value, flag: document.getElementById("flag-titleInput").textContent }));
+  // 부산 공연으로 바꿔 고르면 장소·일시 등이 달라지고, [다른 항목 모두 바꾸기]로 한 번에 바꾼다
+  await page.click(".kopis-cand:nth-child(2)");
+  await page.click("#kopisApplyAll");
+  const afterAll = await page.evaluate(() => ({
+    venue: document.getElementById("venueInput").value, venueFlag: document.getElementById("flag-venueInput").textContent,
+    show: document.getElementById("showDateInput").value,
+    body: document.body.innerText
+  }));
+  const ok = before.cands === 2 && /서울/.test(before.picked) && before.rows.includes("공연명:다름") && before.rows.includes("공연 장소:같음")
+    && afterTitle.title === "하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울" && afterTitle.flag === "공식 정보로 고침"
+    && afterAll.venue === "벡스코 오디토리움" && afterAll.venueFlag === "공식 정보로 고침" && afterAll.show === "2026-12-13T19:00"
+    && !/추정/.test(afterAll.body) && !errors.length;
+  console.log(`\n■ 공식 정보 확인  ${ok ? "✓" : "✗"}`);
+  console.log(`  처음: ${before.status} / 후보 ${before.cands}개, 고른 것: ${before.picked.slice(0, 40)}`);
+  console.log(`  비교: ${before.rows.join(", ")}`);
+  console.log(`  공연명 바꾼 뒤: ${afterTitle.title} [${afterTitle.flag}]`);
+  console.log(`  부산으로 모두 바꾼 뒤: 장소 ${afterAll.venue} [${afterAll.venueFlag}], 일시 ${afterAll.show}`);
+  if (errors.length) console.log("  ! 페이지 오류: " + errors.join(" | "));
+  if (!ok) gateFailures++;
   await page.close();
 }
 

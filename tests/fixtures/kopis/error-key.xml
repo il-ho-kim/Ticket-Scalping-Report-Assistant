@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dbs>
+  <db>
+    <returncode>02</returncode>
+    <errmsg>SERVICE KEY IS NOT REGISTERED ERROR.</errmsg>
+  </db>
+</dbs>

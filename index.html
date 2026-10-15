@@ -129,6 +129,22 @@
   .chip.picked{ border-color:var(--good); background:var(--good-bg); color:var(--good); }
   .chip.picked.manual-pick{ border-color:var(--need); background:var(--need-bg); color:var(--need); }
 
+  .kopis-list{ display:flex; flex-direction:column; gap:6px; margin-top:4px; }
+  .kopis-cand{ text-align:left; border:1.5px solid var(--border); border-radius:10px; background:var(--surface); padding:8px 11px; font-family:inherit; font-size:12.5px; color:var(--text); cursor:pointer; }
+  .kopis-cand.picked{ border-color:var(--good); background:var(--good-bg); }
+  .kopis-cand small{ display:block; margin-top:2px; font-size:11px; color:var(--muted); }
+  .kopis-compare{ display:flex; flex-direction:column; margin-top:4px; }
+  .kopis-row{ border-top:1px dashed var(--border); padding:9px 0 8px; display:flex; flex-direction:column; gap:5px; }
+  .kopis-row-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .kopis-label{ font-size:12px; font-weight:700; }
+  .kopis-same{ font-size:11px; color:var(--good); }
+  .kopis-line{ font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+  .kopis-line b{ font-weight:400; color:var(--muted); margin-right:4px; }
+  .kopis-note{ font-size:11px; color:var(--muted); }
+  .kopis-apply{ flex-shrink:0; padding:5px 11px; border-radius:7px; border:1.5px solid var(--accent); background:var(--surface); color:var(--accent); font-size:11.5px; font-family:inherit; cursor:pointer; }
+  .kopis-row .chips{ gap:6px; }
+  .kopis-row .chip{ padding:5px 10px; font-size:11.5px; }
+  .kopis-actions{ display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
   .mask-card{ display:flex; align-items:center; gap:10px; border:1.5px solid var(--border); border-radius:10px; background:var(--surface); padding:11px 13px; }
   .mask-text{ display:flex; flex-direction:column; gap:1px; flex:1; }
   .mask-title{ font-size:12.5px; }
@@ -394,6 +410,18 @@
           </div>
         </div>
 
+        <div class="route-card" id="kopisCard">
+          <span class="route-label">공연예술통합전산망(KOPIS)</span>
+          <span class="route-name">공식 공연 정보로 확인</span>
+          <span class="route-desc" id="kopisStatus"></span>
+          <div class="kopis-list" id="kopisCandidates" hidden></div>
+          <div class="kopis-compare" id="kopisCompare" hidden></div>
+          <div class="kopis-actions">
+            <button class="filebtn" id="kopisSearchBtn">공식 정보 찾기</button>
+            <button class="filebtn primary-ghost" id="kopisApplyAll" hidden>다른 항목 모두 바꾸기</button>
+          </div>
+        </div>
+
         <div class="mask-card">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
           <div class="mask-text"><span class="mask-title">얼굴 · 전화번호 가리기</span><span class="mask-desc">캡처 썸네일을 눌러 검게 칠해 가려요</span></div>
@@ -476,6 +504,7 @@
 
 <script src="js/parse.js"></script>
 <script src="js/ocr.js"></script>
+<script src="js/kopis-match.js"></script>
 <script>
 (function(){
   "use strict";
@@ -665,6 +694,7 @@
       "images 지원     : " + (imageLimits && imageLimits.images ? "예" : "아니오"),
       "상세            : " + (sampleDebug || "-"),
       "캡처 글자 인식   : " + ocrStatus + (ocrDebug ? " — " + ocrDebug : ""),
+      "공식 정보(KOPIS) : " + (kopis ? kopis.status + (kopis.debug ? " — " + kopis.debug : "") : "-"),   // 처음 그릴 때는 아직 준비 전
       "프레임 안       : " + (window.top !== window.self ? "예" : "아니오"),
       "화면 폭         : " + window.innerWidth + "px",
       "UA              : " + navigator.userAgent
@@ -897,7 +927,8 @@
 
   state.touched = {};
   // 자동으로 채운 값의 출처. "capture": 캡처에서 읽음 (Claude 또는 글자 인식) | "text": 붙여넣은 글에서 읽음
-  var SOURCE_LABEL = { capture: "캡처에서 읽음", text: "글에서 읽음" };
+  // | "kopis": 공연예술통합전산망 공식 정보로 사용자가 [바꾸기]를 눌러 고침
+  var SOURCE_LABEL = { capture: "캡처에서 읽음", text: "글에서 읽음", kopis: "공식 정보로 고침" };
   function setFlag(el, src){
     el.textContent = SOURCE_LABEL[src] || "";
     el.className = "field-flag" + (SOURCE_LABEL[src] ? " auto" : "");
@@ -926,6 +957,7 @@
     if (data.postDate && setAuto("postDateInput", data.postDate, source)) hit++;
     if (data.platform && PLATFORM_CODE[data.platform] && !state.touched.platform){ pickPlatform(data.platform, source); hit++; }
     if (data.vendor && VENDOR_CODE[data.vendor] && !state.touched.vendor){ pickVendor(data.vendor, source); hit++; }
+    if (hit > 0) scheduleKopis();   // 읽어서 채웠으면 공식 정보도 한 번 찾아본다
     return hit > 0;
   }
   function markFlag(id){
@@ -938,7 +970,7 @@
   }
   ["titleInput","saleInput","sellerInput","urlInput","postDateInput","officialPriceInput","showDateInput","venueInput","seatInput"].forEach(function(id){
     var el = document.getElementById(id);
-    el.addEventListener("input", function(){ state.touched[id] = true; delete state.autoFilled[id]; markFlag(id); updateFooter(); });
+    el.addEventListener("input", function(){ state.touched[id] = true; delete state.autoFilled[id]; markFlag(id); updateFooter(); renderKopis(); });
   });
 
   function pickPlatform(name, source){
@@ -971,12 +1003,170 @@
     state.autoFilled["vendor"] = source || undefined;
     setFlag($("#flag-vendor"), source);
     updateFooter();
+    renderKopis();
   }
   $("#vendorChips").addEventListener("click", function(e){
     var c = e.target.closest(".chip"); if (!c) return;
     pickVendor(c.dataset.vendor, null);
   });
   $("#vendorOtherInput").addEventListener("input", updateFooter);
+
+  // ---------- 공식 공연 정보(KOPIS) 확인 ----------
+  // 서버 함수(api/kopis.js)가 공연예술통합전산망을 대신 불러준다. 공식 정보와 다른 항목은
+  // 차이를 보여주기만 하고, 사용자가 [바꾸기]를 눌러야 바뀐다.
+  // status: idle | searching | ready | none | unavailable | error
+  var kopis = { status: "idle", candidates: [], picked: null, req: 0, debug: "", message: "" };
+  var kopisTimer = null;
+  var KOPIS_FIELD = { title: "titleInput", venue: "venueInput", showDate: "showDateInput", officialPrice: "officialPriceInput" };
+
+  function kopisInput(){
+    return { title: fieldVal("titleInput"), venue: fieldVal("venueInput"), showDate: fieldVal("showDateInput"),
+             officialPrice: fieldVal("officialPriceInput"), seat: fieldVal("seatInput"), vendor: state.vendor };
+  }
+  function scheduleKopis(){
+    clearTimeout(kopisTimer);
+    kopisTimer = setTimeout(function(){ if (fieldVal("titleInput").length >= 2) kopisSearch(); }, 300);
+  }
+  function kopisSearch(){
+    var title = fieldVal("titleInput");
+    if (title.length < 2 || !window.KopisMatch) return;
+    var reqId = ++kopis.req;
+    var date = fieldVal("showDateInput").slice(0, 10);
+    kopis.status = "searching"; kopis.candidates = []; kopis.picked = null; kopis.message = "";
+    renderKopis();
+    fetch("api/kopis?title=" + encodeURIComponent(title) + "&date=" + encodeURIComponent(date))
+      .then(function(r){
+        return r.json().catch(function(){ return { ok: false, error: "not_json" }; })
+          .then(function(body){ return { code: r.status, body: body || {} }; });
+      })
+      .then(function(x){
+        if (reqId !== kopis.req) return;   // 그사이 다시 찾았으면 이 결과는 버린다
+        var b = x.body;
+        if (!b.ok){
+          // 서버 함수가 없는 곳(로컬 파일 등)이거나 키가 아직 없으면 '쓸 수 없음'
+          kopis.status = (b.error === "no_key" || b.error === "not_json" || x.code === 404) ? "unavailable" : "error";
+          kopis.message = b.message || "";
+          kopis.debug = (b.error || x.code) + (b.message ? " — " + b.message : "");
+        } else {
+          kopis.candidates = b.candidates || [];
+          kopis.status = kopis.candidates.length ? "ready" : "none";
+          kopis.picked = autoPick(kopis.candidates, date);
+          kopis.debug = "후보 " + kopis.candidates.length + "개";
+        }
+        renderKopis(); renderDiag();
+      })
+      .catch(function(err){
+        if (reqId !== kopis.req) return;
+        kopis.status = "unavailable";
+        kopis.debug = String((err && err.message) || err);
+        renderKopis(); renderDiag();
+      });
+  }
+  // 후보가 하나뿐이거나, 입력한 공연일이 기간 안에 드는 후보가 하나뿐이면 바로 고른다
+  function autoPick(list, date){
+    if (list.length === 1) return list[0];
+    if (!date) return null;
+    var inside = list.filter(function(p){ return KopisMatch.inPeriod(date, p); });
+    return inside.length === 1 ? inside[0] : null;
+  }
+  function kopisShow(key, v){
+    if (!v) return "(비어 있음)";
+    if (key === "showDate") return fmtDate(v);
+    if (key === "officialPrice") return fmtWon(v);
+    return v;
+  }
+  function applyKopis(key, value){
+    if (key === "vendor"){ pickVendor(value, "kopis"); return; }
+    var id = KOPIS_FIELD[key], el = document.getElementById(id);
+    el.value = value;
+    if (el.value === "") return;
+    delete state.touched[id];   // 사용자가 직접 누른 것이므로 '공식 정보로 고침'으로 표시한다
+    state.autoFilled[id] = "kopis";
+    markFlag(id);
+    updateFooter();
+    renderKopis();
+  }
+  function el(tag, cls, text){
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;   // 공식 정보도 바깥에서 온 글이므로 textContent로만 넣는다
+    return e;
+  }
+  function renderKopis(){
+    var statusEl = $("#kopisStatus"), list = $("#kopisCandidates"), cmp = $("#kopisCompare");
+    var btn = $("#kopisSearchBtn"), all = $("#kopisApplyAll");
+    if (!statusEl) return;
+    var title = fieldVal("titleInput");
+    btn.disabled = kopis.status === "searching" || title.length < 2;
+    btn.textContent = kopis.status === "idle" ? "공식 정보 찾기" : "공식 정보 다시 찾기";
+
+    var msg = {
+      idle: "공연명을 채우면 공식 정보와 비교해 다른 부분을 알려드려요.",
+      searching: "공연예술통합전산망에서 찾는 중이에요...",
+      none: "비슷한 공연을 찾지 못했어요. 공연명을 고친 뒤 다시 찾아보세요.",
+      unavailable: "지금은 공식 정보 확인을 쓸 수 없어요. 다른 기능은 그대로 쓸 수 있어요.",
+      error: kopis.message || "공연예술통합전산망에서 정보를 받지 못했어요. 잠시 뒤 다시 시도해주세요."
+    }[kopis.status];
+
+    list.innerHTML = "";
+    list.hidden = !(kopis.status === "ready" && kopis.candidates.length > 1);
+    kopis.candidates.forEach(function(p){
+      var b = el("button", "kopis-cand" + (kopis.picked && kopis.picked.id === p.id ? " picked" : ""), p.title);
+      b.appendChild(el("small", null, (p.from === p.to ? p.from : p.from + " ~ " + p.to) + " · " + KopisMatch.venueName(p.venue)));
+      b.addEventListener("click", function(){ kopis.picked = p; renderKopis(); });
+      list.appendChild(b);
+    });
+
+    cmp.innerHTML = "";
+    cmp.hidden = !(kopis.status === "ready" && kopis.picked);
+    all.hidden = true;
+    if (kopis.status === "ready"){
+      if (!kopis.picked) msg = "비슷한 공연이 " + kopis.candidates.length + "개 있어요. 맞는 공연을 골라주세요.";
+      else {
+        var rows = KopisMatch.compare(kopisInput(), kopis.picked);
+        var diffs = rows.filter(function(r){ return !r.same && r.suggest != null; });
+        msg = rows.every(function(r){ return r.same; })
+          ? "입력한 내용이 공식 정보와 같아요."
+          : "공식 정보와 다른 항목이 있어요. 맞는 값으로 바꿀 수 있어요.";
+        rows.forEach(function(r){
+          var row = el("div", "kopis-row");
+          var head = el("div", "kopis-row-head");
+          head.appendChild(el("span", "kopis-label", r.label));
+          if (r.same) head.appendChild(el("span", "kopis-same", "✓ 공식 정보와 같아요"));
+          else if (r.suggest != null){
+            var ap = el("button", "kopis-apply", "바꾸기");
+            ap.addEventListener("click", function(){ applyKopis(r.key, r.suggest); });
+            head.appendChild(ap);
+          }
+          row.appendChild(head);
+          if (!r.same){
+            var a = el("div", "kopis-line"); a.appendChild(el("b", null, "입력")); a.appendChild(document.createTextNode(kopisShow(r.key, r.input)));
+            var o = el("div", "kopis-line"); o.appendChild(el("b", null, "공식"));
+            o.appendChild(document.createTextNode(r.suggest != null && r.key !== "vendor" ? kopisShow(r.key, r.suggest) : (r.official || "(정보 없음)")));
+            row.appendChild(a); row.appendChild(o);
+            if (r.note) row.appendChild(el("div", "kopis-note", r.note));
+            if (r.options && r.options.length > 1){
+              var chips = el("div", "chips");
+              r.options.forEach(function(opt){
+                var c = el("button", "chip", opt.label);
+                c.addEventListener("click", function(){ applyKopis(r.key, opt.value); });
+                chips.appendChild(c);
+              });
+              row.appendChild(chips);
+            }
+          }
+          cmp.appendChild(row);
+        });
+        if (diffs.length > 1){
+          all.hidden = false;
+          all.onclick = function(){ diffs.forEach(function(r){ applyKopis(r.key, r.suggest); }); };
+        }
+      }
+    }
+    statusEl.textContent = msg;
+  }
+  $("#kopisSearchBtn").addEventListener("click", kopisSearch);
+  renderKopis();
 
   function evidenceComplete(){
     var need = ["titleInput","saleInput","urlInput","officialPriceInput","showDateInput","venueInput"];
@@ -1098,7 +1288,7 @@
     rows.forEach(function(r){
       var row = document.createElement("div"); row.className = "row";
       var tagCls = r.src ? "auto" : "manual";
-      var tagTxt = r.src ? "자동" : "직접입력";
+      var tagTxt = r.src === "kopis" ? "공식 정보" : (r.src ? "자동" : "직접입력");
       var tagHtml = r.noTag ? "" : ' <span class="tag '+tagCls+'">'+tagTxt+'</span>';
       row.innerHTML =
         '<div class="row-text"><span class="row-label">'+r.label+tagHtml+'</span>' +
