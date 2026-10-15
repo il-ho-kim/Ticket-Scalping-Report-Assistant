@@ -105,6 +105,8 @@ for (const c of cases) {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
+  // 글자 인식 정확도만 재려고 이어지는 자동 단계(판매글·공식 정보로 채우기)는 끈다
+  await page.route("**/api/**", (r) => r.fulfill({ status: 404, body: "" }));
   await page.goto(base + "/index.html");
   // 1 → 2(공연) → 3 → 4단계
   await page.click("#primaryBtn");
@@ -179,34 +181,37 @@ for (const c of cases) {
   await page.close();
 }
 
-// 공식 정보(KOPIS) 확인: 캡처 읽기 → 자동으로 찾기 → 다른 항목 [바꾸기] → '공식 정보로 고침' 표시
+// 공식 정보(KOPIS) 확인: 캡처 읽기 → 자동으로 찾기 → 확실한 공연이면 자동으로 고침 → 다른 공연을 고르면 [다른 항목 모두 바꾸기]
+async function upload(page, file, capturedAt) {
+  const b64 = readFileSync(join(fixtures, "captures", file)).toString("base64");
+  await page.evaluate(({ b64, file, capturedAt }) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], file, { type: "image/png", lastModified: new Date(capturedAt).getTime() }));
+    const input = document.getElementById("fileInput"); input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, { b64, file, capturedAt });
+  await page.waitForFunction(() => !document.getElementById("extractBtn").disabled);
+}
+// 버튼 한 번 뒤 자동 단계가 모두 끝날 때까지 (끝나면 남은 필수 항목 안내가 나온다)
+const waitAutoDone = (page) => page.waitForFunction(() => /직접 채워 주세요|모두 채웠어요/.test(document.getElementById("extractStatus").textContent), null, { timeout: 180000 });
 {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(base + "/index.html");
   await page.click("#primaryBtn"); await page.click("#optConcert"); await page.click("#primaryBtn"); await page.click("#primaryBtn");
-  const b64 = readFileSync(join(fixtures, "captures", "bunjang.png")).toString("base64");
-  await page.evaluate(({ b64 }) => {
-    const dt = new DataTransfer();
-    dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "bunjang.png", { type: "image/png", lastModified: new Date("2026-10-08T15:00").getTime() }));
-    const input = document.getElementById("fileInput"); input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true }));
-  }, { b64 });
-  await page.waitForFunction(() => !document.getElementById("extractBtn").disabled);
+  await upload(page, "bunjang.png", "2026-10-08T15:00");
   await page.click("#extractBtn");
-  // 서울·부산 두 후보 중 공연일(11/22)이 기간 안에 드는 서울 공연이 바로 골라져 비교가 나와야 한다
-  await page.waitForSelector("#kopisCompare:not([hidden]) .kopis-row", { timeout: 180000 });
+  await waitAutoDone(page);
+  // 서울·부산 두 후보 중 공연일(11/22)이 기간 안에 드는 서울 공연이 바로 골라지고, 다른 공연명은 자동으로 고쳐진다
   const before = await page.evaluate(() => ({
-    status: document.getElementById("kopisStatus").textContent,
+    status: document.getElementById("kopisStatus").textContent, extract: document.getElementById("extractStatus").textContent,
     cands: document.querySelectorAll("#kopisCandidates .kopis-cand").length,
     picked: (document.querySelector(".kopis-cand.picked") || {}).textContent || "",
-    rows: Array.from(document.querySelectorAll(".kopis-row")).map((r) => r.querySelector(".kopis-label").textContent + ":" + (r.querySelector(".kopis-same") ? "같음" : "다름"))
+    rows: Array.from(document.querySelectorAll(".kopis-row")).map((r) => r.querySelector(".kopis-label").textContent + ":" + (r.querySelector(".kopis-same") ? "같음" : "다름")),
+    title: document.getElementById("titleInput").value, flag: document.getElementById("flag-titleInput").textContent
   }));
   await page.screenshot({ path: join(outDir, "kopis-card.png"), fullPage: true });
-  // 공연명 [바꾸기]
-  await page.click(".kopis-row:has(.kopis-label:text-is('공연명')) .kopis-apply");
-  const afterTitle = await page.evaluate(() => ({ title: document.getElementById("titleInput").value, flag: document.getElementById("flag-titleInput").textContent }));
-  // 부산 공연으로 바꿔 고르면 장소·일시 등이 달라지고, [다른 항목 모두 바꾸기]로 한 번에 바꾼다
+  // 부산 공연으로 바꿔 고르면(사용자 선택) 다른 항목을 보여주고, [다른 항목 모두 바꾸기]로 한 번에 바꾼다
   await page.click(".kopis-cand:nth-child(2)");
   await page.click("#kopisApplyAll");
   const afterAll = await page.evaluate(() => ({
@@ -214,43 +219,42 @@ for (const c of cases) {
     show: document.getElementById("showDateInput").value,
     body: document.body.innerText
   }));
-  const ok = before.cands === 2 && /서울/.test(before.picked) && before.rows.includes("공연명:다름") && before.rows.includes("공연 장소:같음")
-    && afterTitle.title === "하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울" && afterTitle.flag === "공식 정보로 고침"
+  const ok = before.cands === 2 && /서울/.test(before.picked) && before.rows.every((r) => r.endsWith("같음"))
+    && /공식 정보로 1개 항목을 고쳤어요/.test(before.status) && /직접 채워 주세요: 게시글 URL$/.test(before.extract)
+    && before.title === "하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울" && before.flag === "공식 정보로 고침"
     && afterAll.venue === "벡스코 오디토리움" && afterAll.venueFlag === "공식 정보로 고침" && afterAll.show === "2026-12-13T19:00"
     && !/추정/.test(afterAll.body) && !errors.length;
   console.log(`\n■ 공식 정보 확인  ${ok ? "✓" : "✗"}`);
-  console.log(`  처음: ${before.status} / 후보 ${before.cands}개, 고른 것: ${before.picked.slice(0, 40)}`);
-  console.log(`  비교: ${before.rows.join(", ")}`);
-  console.log(`  공연명 바꾼 뒤: ${afterTitle.title} [${afterTitle.flag}]`);
+  console.log(`  자동: ${before.status} / 후보 ${before.cands}개, 고른 것: ${before.picked.slice(0, 40)}`);
+  console.log(`  비교: ${before.rows.join(", ")} / 공연명 ${before.title} [${before.flag}]`);
+  console.log(`  남은 항목 안내: ${before.extract}`);
   console.log(`  부산으로 모두 바꾼 뒤: 장소 ${afterAll.venue} [${afterAll.venueFlag}], 일시 ${afterAll.show}`);
   if (errors.length) console.log("  ! 페이지 오류: " + errors.join(" | "));
   if (!ok) gateFailures++;
   await page.close();
 }
 
-// 게시글 주소 찾기·대조: 티켓베이 캡처 → 자동 검색 → [이 주소 쓰기] → 다른 글 주소 붙여넣기 → '다른 글'
+// 버튼 한 번으로 채우기 (티켓베이): 캡처 읽기 → 같은 판매글 자동으로 찾아 주소·판매글 정보 채우기 → 공식 정보 확인
+// 그다음 다른 글 주소를 붙여넣으면 '다른 글', 같은 글을 다시 붙여넣으면 '캡처와 대조함'
 {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await page.goto(base + "/index.html");
   await page.click("#primaryBtn"); await page.click("#optConcert"); await page.click("#primaryBtn"); await page.click("#primaryBtn");
-  const b64 = readFileSync(join(fixtures, "captures", "ticketbay.png")).toString("base64");
-  await page.evaluate(({ b64 }) => {
-    const dt = new DataTransfer();
-    dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "ticketbay.png", { type: "image/png", lastModified: new Date("2026-10-08T15:02").getTime() }));
-    const input = document.getElementById("fileInput"); input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true }));
-  }, { b64 });
-  await page.waitForFunction(() => !document.getElementById("extractBtn").disabled);
+  await upload(page, "ticketbay.png", "2026-10-08T15:02");
   await page.click("#extractBtn");
-  await page.waitForSelector("#listingResults:not([hidden]) .listing-item", { timeout: 180000 });
-  const found = await page.evaluate(() => ({
-    status: document.getElementById("listingStatus").textContent,
-    items: Array.from(document.querySelectorAll("#listingResults .listing-item")).map((x) => x.innerText.replace(/\n+/g, " | "))
-  }));
-  await page.locator("#listingCard").screenshot({ path: join(outDir, "listing-found.png") });
-  await page.click("#listingResults .kopis-apply");
-  const used = await page.evaluate(() => ({ url: document.getElementById("urlInput").value, flag: document.getElementById("flag-urlInput").textContent }));
+  await waitAutoDone(page);
+  const filled = await page.evaluate(() => {
+    const v = (id) => document.getElementById(id).value, f = (id) => document.getElementById("flag-" + id).textContent;
+    return { url: v("urlInput"), urlFlag: f("urlInput"), title: v("titleInput"), titleFlag: f("titleInput"), show: v("showDateInput"),
+      post: v("postDateInput"), postFlag: f("postDateInput"), official: v("officialPriceInput"), sale: v("saleInput"),
+      venue: v("venueInput"), venueFlag: f("venueInput"), seat: v("seatInput"), seatFlag: f("seatInput"),
+      platform: (document.querySelector("#platformChips .chip.picked") || { dataset: {} }).dataset.platform,
+      listing: document.getElementById("listingStatus").textContent, kopis: document.getElementById("kopisStatus").textContent,
+      extract: document.getElementById("extractStatus").textContent };
+  });
+  await page.screenshot({ path: join(outDir, "autofill-ticketbay.png"), fullPage: true });
   // 다른 판매글 주소를 붙여넣으면 '다른 글'과 다른 항목이 나와야 한다
   await page.fill("#urlInput", "https://www.ticketbay.co.kr/product/view/9000000000002");
   await page.waitForSelector("#listingResults .listing-verdict.diff", { timeout: 15000 });
@@ -265,13 +269,21 @@ for (const c of cases) {
   await page.waitForSelector("#listingResults .listing-verdict.same", { timeout: 15000 });
   const repasted = await page.evaluate(() => document.getElementById("flag-urlInput").textContent);
   const body = await page.evaluate(() => document.body.innerText);
-  const ok = found.items.length === 1 && /캡처와 같은 글이에요/.test(found.items[0]) && /9000000000001/.test(found.items[0])
-    && used.url === "https://www.ticketbay.co.kr/product/view/9000000000001" && used.flag === "캡처와 대조함"
+  const ok = filled.url === "https://www.ticketbay.co.kr/product/view/9000000000001" && filled.urlFlag === "캡처와 대조함"
+    && filled.title === "하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울" && filled.show === "2026-11-22T18:00"
+    && filled.post === "2026-10-08T12:02" && filled.postFlag === "판매글에서 확인"
+    && filled.official === "154000" && filled.sale === "250000"
+    && filled.venue === "고척스카이돔" && filled.venueFlag === "판매글에서 확인"
+    && filled.seat === "플로어 R석 A구역 12열 7번" && filled.seatFlag === "판매글에서 확인" && filled.platform === "티켓베이"
+    && /직접 채워 주세요: 예매처$/.test(filled.extract)   // 가상 공연은 공식 예매처가 둘이라 사용자가 고른다
     && pasted.verdict === "캡처와 다른 글이에요" && pasted.reasons.some((r) => /판매가가 달라요/.test(r)) && pasted.guide && pasted.flag === ""
     && repasted === "캡처와 대조함" && !/추정/.test(body) && !errors.length;
-  console.log(`\n■ 게시글 주소 찾기  ${ok ? "✓" : "✗"}`);
-  console.log(`  찾기: ${found.status} / ${found.items.join(" // ").slice(0, 160)}`);
-  console.log(`  쓰기: ${used.url} [${used.flag}]`);
+  console.log(`\n■ 버튼 한 번으로 채우기(티켓베이)  ${ok ? "✓" : "✗"}`);
+  console.log(`  주소: ${filled.url} [${filled.urlFlag}] / ${filled.listing}`);
+  console.log(`  공연명 ${filled.title} [${filled.titleFlag}] · 일시 ${filled.show} · 게시 ${filled.post} [${filled.postFlag}]`);
+  console.log(`  정가 ${filled.official} · 판매가 ${filled.sale} · 장소 ${filled.venue} [${filled.venueFlag}] · 좌석 ${filled.seat} [${filled.seatFlag}] · ${filled.platform}`);
+  console.log(`  공식 정보: ${filled.kopis}`);
+  console.log(`  남은 항목 안내: ${filled.extract}`);
   console.log(`  다른 글 붙여넣기: ${pasted.verdict} — ${pasted.reasons.join(" / ")} (안내 ${pasted.guide ? "보임" : "숨김"})`);
   console.log(`  같은 글 다시 붙여넣기: [${repasted}]`);
   if (errors.length) console.log("  ! 페이지 오류: " + errors.join(" | "));

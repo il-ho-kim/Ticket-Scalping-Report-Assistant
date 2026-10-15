@@ -144,10 +144,14 @@
     x.forEach(function(g){ for (var i = 0; i < y.length; i++){ if (!used[i] && y[i] === g){ used[i] = true; hit++; break; } } });
     return x.length + y.length ? (2 * hit) / (x.length + y.length) : 0;
   }
-  // 후보 정렬: 이름이 비슷한 순 → 공연일이 기간 안에 드는 것 우선
-  function rankCandidates(list, title, dateStr){
+  // 후보 정렬: 이름이 비슷한 순(공연명·다른 이름 중 가장 비슷한 것) → 공연일이 기간 안 → 공연장이 같은 것 우선
+  // opts.alts: 다른 이름들(아티스트 영문명 등), opts.venue: 공연장
+  function rankCandidates(list, title, dateStr, opts){
+    var names = [title].concat((opts && opts.alts) || []).filter(Boolean);
+    var venue = opts && opts.venue;
     return list.map(function(p){
-      var s = nameScore(title, p.title) + (dateStr && inPeriod(dateStr, p) ? 0.5 : 0);
+      var ns = names.reduce(function(m, n){ return Math.max(m, nameScore(n, p.title)); }, 0);
+      var s = ns + (dateStr && inPeriod(dateStr, p) ? 0.5 : 0) + (venue && sameVenue(venue, p.venue) ? 0.5 : 0);
       return { perf: p, score: s };
     }).sort(function(a, b){ return b.score - a.score; }).map(function(x){ return x.perf; });
   }
@@ -279,7 +283,7 @@
   return {
     xmlTag: xmlTag, xmlBlocks: xmlBlocks, parseList: parseList, parseDetail: parseDetail, parseError: parseError,
     parsePrices: parsePrices, parseTimes: parseTimes, timesOn: timesOn, sessions: sessions, inPeriod: inPeriod,
-    nameScore: nameScore, rankCandidates: rankCandidates, seatGrade: seatGrade, priceForGrade: priceForGrade,
+    nameScore: nameScore, rankCandidates: rankCandidates, sameVenue: function(a, b){ return sameVenue(a, b) || sameVenue(a, venueName(b)); }, seatGrade: seatGrade, priceForGrade: priceForGrade,
     appVendor: appVendor, venueName: venueName, compare: compare
   };
 });

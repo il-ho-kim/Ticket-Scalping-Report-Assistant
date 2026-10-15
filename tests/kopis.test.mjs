@@ -164,6 +164,34 @@ test("서버 함수: 전체 이름으로 못 찾으면 가장 긴 낱말로 다�
   assert.deepEqual(k.calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams.get("shprfnm")), ["'BLUE' 콘서트", "BLUE"]);
 });
 
+test("서버 함수: 중고거래 표기로 못 찾으면 다른 이름(영문명)으로, 그래도 없으면 그날 같은 공연장으로", async () => {
+  // 실제 사례: 티켓베이 "엑소 2026 - 서울" ↔ KOPIS "EXO PLANET #6, EXhOrizon [dot]"
+  const byAlt = fakeKopis((u) => u.pathname.endsWith("/pblprfr")
+    ? (u.searchParams.get("shprfnm") === "HANEULBIT" ? "list-blue-hour.xml" : null)
+    : `detail-${u.pathname.split("/").pop()}.xml`);
+  let h = createHandler({ fetch: byAlt.fetch, getKey: () => "K" });
+  let r = await call(h, "/api/kopis?title=" + encodeURIComponent("하늘빛 2026 - 서울") + "&date=2026-11-22&alt=HANEULBIT");
+  assert.equal(r.body.candidates[0].id, "PF900001");
+  assert.deepEqual(byAlt.calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams.get("shprfnm")), ["하늘빛 2026 - 서울", "HANEULBIT"]);
+
+  // 이름으로는 아무것도 안 나오고, 그날 목록(이름 없이)에서 공연장이 같은 것만 고른다
+  const byVenue = fakeKopis((u) => u.pathname.endsWith("/pblprfr")
+    ? (u.searchParams.has("shprfnm") ? null : "list-blue-hour.xml")
+    : `detail-${u.pathname.split("/").pop()}.xml`);
+  h = createHandler({ fetch: byVenue.fetch, getKey: () => "K" });
+  r = await call(h, "/api/kopis?title=" + encodeURIComponent("하늘빛 2026") + "&date=2026-11-22&venue=" + encodeURIComponent("고척스카이돔"));
+  assert.deepEqual(r.body.candidates.map((c) => c.id), ["PF900001"]);
+  // 공연장을 모르면 그날 목록으로 넓히지 않는다
+  r = await call(h, "/api/kopis?title=" + encodeURIComponent("하늘빛 2026") + "&date=2026-11-22");
+  assert.deepEqual(r.body.candidates, []);
+});
+
+test("후보 순서: 다른 이름·공연장도 반영", () => {
+  const list = M.parseList(fx("list-blue-hour.xml"));
+  assert.equal(M.rankCandidates(list, "엑소 2026", "", { alts: ["BLUE HOUR"], venue: "벡스코" })[0].id, "PF900002");
+  assert.ok(M.sameVenue("KSPO DOME", "올림픽공원 (KSPO DOME(체조경기장))"));
+});
+
 test("서버 함수: 키가 없거나 잘못됐을 때", async () => {
   const noKey = createHandler({ fetch: async () => { throw new Error("부르면 안 됨"); }, getKey: () => "" });
   const r1 = await call(noKey, "/api/kopis?title=BLUE%20HOUR");
