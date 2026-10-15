@@ -39,6 +39,24 @@ test("티켓베이 판매글 정리", () => {
     /^플로어석 \(Floor\) 스탠딩석 \(Standing seat\) ONE구역/);
 });
 
+test("티켓베이 공연 정보로 신고서 채우기 값 (공식 공연명·공연장·영문명·등급 정가·좌석 문구)", () => {
+  // 실제 엑소 공연(6808) 정보 모양
+  const info = { category_name: "엑소 2026 - 서울", depth2_name: "엑소 (EXO)",
+    contents: "EXO PLANET #6 - EXhOrizon [dot] -\n2026.11.06 - 2026.11.08\nKSPO DOME",
+    seat_grade_list: [{ name: "VIP STANDING", price: 198000 }, { name: "스탠딩석 (Standing seat)", price: 165000 }] };
+  const l = TB.normalize({ display_number: "5129460096431", floor: "플로어석 (Floor)", grade: "스탠딩석 (Standing seat)", area: "ONE",
+    seat_number_type: "ROW", seat_number: "5nn", name: "ONE구역(존/블럭) 5nnROW ", price: 420000, list_price: 165000,
+    start_perform_date: "2026-11-06T19:00:00", created_at: "2026-10-14T22:35:58" }, info.category_name, info);
+  assert.equal(l.officialTitle, "EXO PLANET #6 - EXhOrizon [dot]");
+  assert.equal(l.venue, "KSPO DOME");
+  assert.equal(l.artist, "엑소");
+  assert.deepEqual(l.aliases, ["EXO"]);
+  assert.equal(l.gradePrice, 165000);
+  assert.equal(l.seatLabel, "플로어석 스탠딩석 ONE구역 5nn열");
+  assert.equal(listings()[0].seatLabel, "플로어 R석 A구역 12열 7번");
+  assert.deepEqual(TB.categoryExtras(null, "R"), {});
+});
+
 test("대조: 같은 글은 하나뿐, 다른 글은 다른 항목을 알려준다", () => {
   const results = listings().map((l) => ({ id: l.id, r: LM.compare(CAPTURE, l) }));
   assert.deepEqual(results.filter((x) => x.r.same).map((x) => x.id), ["9000000000001"]);
@@ -126,6 +144,11 @@ test("서버 함수: 캡처 값으로 찾기 → 같은 글 하나", async () =>
   assert.deepEqual(r.body.candidates.map((c) => c.listing.url), ["https://www.ticketbay.co.kr/product/view/9000000000001"]);
   assert.equal(r.body.candidates[0].result.same, true);
   assert.equal(r.body.checked, 4);
+  const l = r.body.candidates[0].listing;
+  assert.equal(l.officialTitle, "하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울");
+  assert.equal(l.venue, "고척스카이돔");
+  assert.equal(l.gradePrice, 154000);
+  assert.deepEqual(l.aliases, ["HANEULBIT"]);
   assert.ok(r.body.requests <= 5, "요청 수는 5번 이하");
   // 목록 조회는 그날 회차·좌석 등급으로 좁혀서 부른다
   const post = k.calls.find((c) => c.method === "POST");

@@ -956,7 +956,8 @@
   // 자동으로 채운 값의 출처. "capture": 캡처에서 읽음 (Claude 또는 글자 인식) | "text": 붙여넣은 글에서 읽음
   // | "kopis": 공연예술통합전산망 공식 정보로 사용자가 [바꾸기]를 눌러 고침
   // | "listing": 캡처와 같은 글로 확인된 판매글 주소
-  var SOURCE_LABEL = { capture: "캡처에서 읽음", text: "글에서 읽음", kopis: "공식 정보로 고침", listing: "캡처와 대조함" };
+  // | "listingData": 캡처와 같은 글로 확인된 판매글에 적힌 값 (티켓베이)
+  var SOURCE_LABEL = { capture: "캡처에서 읽음", text: "글에서 읽음", kopis: "공식 정보로 고침", listing: "캡처와 대조함", listingData: "판매글에서 확인" };
   function setFlag(el, src){
     el.textContent = SOURCE_LABEL[src] || "";
     el.className = "field-flag" + (SOURCE_LABEL[src] ? " auto" : "");
@@ -986,11 +987,32 @@
     if (data.platform && PLATFORM_CODE[data.platform] && !state.touched.platform){ pickPlatform(data.platform, source); hit++; }
     if (data.vendor && VENDOR_CODE[data.vendor] && !state.touched.vendor){ pickVendor(data.vendor, source); hit++; }
     if (data.listingNumber) state.listingNumber = String(data.listingNumber);
-    if (hit > 0){
-      scheduleKopis();     // 읽어서 채웠으면 공식 정보도 한 번 찾아본다
-      scheduleListing();   // 티켓베이 글이고 주소가 비어 있으면 주소도 찾아본다
-    }
+    if (hit > 0) scheduleAutoFill();
     return hit > 0;
+  }
+  // 읽어서 채운 뒤 자동으로 이어지는 단계. 버튼 한 번으로 신고서가 최대한 채워지게 한다.
+  //   티켓베이 글이고 주소가 비어 있으면: 판매글 찾기 → (같은 글 하나면) 주소·판매글 정보 채우기 → 공식 정보(KOPIS)
+  //   그 밖에는: 공식 정보(KOPIS)
+  //   마지막에 아직 비어 있는 필수 항목을 알려준다.
+  // 사용자가 직접 고친 칸은 어느 단계에서도 덮어쓰지 않는다.
+  function scheduleAutoFill(){
+    clearTimeout(listingTimer); clearTimeout(kopisTimer);
+    listingTimer = setTimeout(function(){
+      if (state.platform === "티켓베이" && !fieldVal("urlInput")) listingSearch({ auto: true });
+      else { renderListing(); if (fieldVal("titleInput").length >= 2) kopisSearch({ auto: true }); else reportMissing(); }
+    }, 350);
+  }
+  var REQUIRED = [["titleInput", "공연명"], ["showDateInput", "공연 일시"], ["officialPriceInput", "정가"], ["saleInput", "판매 가격"],
+                  ["venueInput", "공연 장소"], ["platform", "거래 플랫폼"], ["vendor", "예매처"], ["urlInput", "게시글 URL"]];
+  function reportMissing(){
+    var missing = REQUIRED.filter(function(r){
+      if (r[0] === "platform") return !state.platform;
+      if (r[0] === "vendor") return !state.vendor;
+      return !fieldVal(r[0]);
+    }).map(function(r){ return r[1]; });
+    $("#extractStatus").textContent = missing.length
+      ? "자동으로 채울 수 있는 값은 다 채웠어요. 직접 채워 주세요: " + missing.join(", ")
+      : "필수 항목을 모두 채웠어요. 내용을 한 번 확인하고 [다음]을 눌러주세요.";
   }
   function markFlag(id){
     var f = document.getElementById("flag-"+id);
@@ -1059,18 +1081,19 @@
     return { title: fieldVal("titleInput"), venue: fieldVal("venueInput"), showDate: fieldVal("showDateInput"),
              officialPrice: fieldVal("officialPriceInput"), seat: fieldVal("seatInput"), vendor: state.vendor };
   }
-  function scheduleKopis(){
-    clearTimeout(kopisTimer);
-    kopisTimer = setTimeout(function(){ if (fieldVal("titleInput").length >= 2) kopisSearch(); }, 300);
-  }
-  function kopisSearch(){
+  function kopisSearch(opts){
+    var auto = !!(opts && opts.auto === true);
     var title = fieldVal("titleInput");
-    if (title.length < 2 || !window.KopisMatch) return;
+    if (title.length < 2 || !window.KopisMatch){ if (auto) reportMissing(); return; }
     var reqId = ++kopis.req;
     var date = fieldVal("showDateInput").slice(0, 10);
-    kopis.status = "searching"; kopis.candidates = []; kopis.picked = null; kopis.message = "";
+    kopis.status = "searching"; kopis.candidates = []; kopis.picked = null; kopis.message = ""; kopis.applied = 0;
     renderKopis();
-    fetch("api/kopis?title=" + encodeURIComponent(title) + "&date=" + encodeURIComponent(date))
+    // 다른 이름(티켓베이의 아티스트 영문명 등)과 공연장도 함께 보낸다: KOPIS는 정식 공연명으로 등록돼 있어 이름만으로는 못 찾는 경우가 많다
+    var hints = state.listingHints || {};
+    var alt = (hints.alts || []).join(",");
+    fetch("api/kopis?title=" + encodeURIComponent(title) + "&date=" + encodeURIComponent(date) +
+          (alt ? "&alt=" + encodeURIComponent(alt) : "") + (fieldVal("venueInput") ? "&venue=" + encodeURIComponent(fieldVal("venueInput")) : ""))
       .then(function(r){
         return r.json().catch(function(){ return { ok: false, error: "not_json" }; })
           .then(function(body){ return { code: r.status, body: body || {} }; });
@@ -1088,15 +1111,29 @@
           kopis.status = kopis.candidates.length ? "ready" : "none";
           kopis.picked = autoPick(kopis.candidates, date);
           kopis.debug = "후보 " + kopis.candidates.length + "개";
+          // 자동 단계에서 확실히 한 공연으로 정해지면, 사용자가 직접 고치지 않은 칸은 공식 정보로 바로 고친다
+          if (auto && kopis.picked) kopis.applied = autoApplyKopis(kopis.picked);
         }
         renderKopis(); renderDiag();
+        if (auto) reportMissing();
       })
       .catch(function(err){
         if (reqId !== kopis.req) return;
         kopis.status = "unavailable";
         kopis.debug = String((err && err.message) || err);
         renderKopis(); renderDiag();
+        if (auto) reportMissing();
       });
+  }
+  function autoApplyKopis(perf){
+    var n = 0;
+    KopisMatch.compare(kopisInput(), perf).forEach(function(r){
+      if (r.same || r.suggest == null) return;
+      if (r.key === "vendor"){ if (!state.touched.vendor){ pickVendor(r.suggest, "kopis"); n++; } return; }
+      var id = KOPIS_FIELD[r.key];
+      if (id && !state.touched[id]){ applyKopis(r.key, r.suggest); n++; }
+    });
+    return n;
   }
   // 후보가 하나뿐이거나, 입력한 공연일이 기간 안에 드는 후보가 하나뿐이면 바로 고른다
   function autoPick(list, date){
@@ -1162,7 +1199,7 @@
         var rows = KopisMatch.compare(kopisInput(), kopis.picked);
         var diffs = rows.filter(function(r){ return !r.same && r.suggest != null; });
         msg = rows.every(function(r){ return r.same; })
-          ? "입력한 내용이 공식 정보와 같아요."
+          ? (kopis.applied ? "공식 정보로 " + kopis.applied + "개 항목을 고쳤어요. 이제 공식 정보와 같아요." : "입력한 내용이 공식 정보와 같아요.")
           : "공식 정보와 다른 항목이 있어요. 맞는 값으로 바꿀 수 있어요.";
         rows.forEach(function(r){
           var row = el("div", "kopis-row");
@@ -1201,7 +1238,7 @@
     }
     statusEl.textContent = msg;
   }
-  $("#kopisSearchBtn").addEventListener("click", kopisSearch);
+  $("#kopisSearchBtn").addEventListener("click", function(){ kopisSearch(); });
 
   // ---------- 게시글 주소 찾기·대조 (지금은 티켓베이) ----------
   // 서버 함수(api/listing.js)가 티켓베이 공개 페이지를 대신 조회한다. 판정은 두 가지뿐: 같은 글 / 다른 글.
@@ -1244,7 +1281,8 @@
       if (/^https?:\/\//i.test(u) && listingRelevant()) listingVerify(u);
     }, 600);
   }
-  function listingSearch(){
+  function listingSearch(opts){
+    var auto = !!(opts && opts.auto === true);
     var reqId = ++listing.req;
     listing.status = "searching"; listing.candidates = []; listing.message = "";
     renderListing();
@@ -1261,10 +1299,16 @@
         listing.debug = "확인한 판매글 " + (b.checked || 0) + "개, 요청 " + (b.requests || 0) + "번";
       }
       renderListing(); renderDiag();
+      if (auto){
+        // 같은 글이 딱 하나면 주소와 판매글 정보를 바로 채운다 (여럿이면 사용자가 고른다)
+        if (listing.status === "found" && listing.candidates.length === 1) useListing(listing.candidates[0], { auto: true });
+        else kopisSearch({ auto: true });
+      }
     }).catch(function(err){
       if (reqId !== listing.req) return;
       listing.status = "unavailable"; listing.debug = String((err && err.message) || err);
       renderListing(); renderDiag();
+      if (auto) kopisSearch({ auto: true });
     });
   }
   function listingVerify(url){
@@ -1280,7 +1324,11 @@
           message: (b.error === "not_json" || x.code === 404) ? "지금은 주소 대조를 쓸 수 없어요." : (b.message || "대조하지 못했어요.") };
         else {
           listing.verify = { status: "done", url: url, result: b.result, listing: b.listing, message: "", req: reqId };
-          if (b.result && b.result.same && fieldVal("urlInput") === url){ state.autoFilled.urlInput = "listing"; markFlag("urlInput"); }
+          if (b.result && b.result.same && fieldVal("urlInput") === url){
+            state.autoFilled.urlInput = "listing"; markFlag("urlInput");
+            // 붙여넣은 주소가 캡처와 같은 글이면, 그 판매글 정보로 빈 칸·자동으로 채운 칸을 채운다
+            if (applyListingData(b.listing)) kopisSearch({ auto: true });
+          }
         }
         renderListing(); renderDiag();
       })
@@ -1298,7 +1346,38 @@
     state.autoFilled.urlInput = "listing";
     markFlag("urlInput");
     listing.verify = { status: "done", url: c.listing.url, result: c.result, listing: c.listing, message: "", req: ++listing.verify.req };
+    listing.filled = applyListingData(c.listing);
     updateFooter(); renderListing();
+    kopisSearch({ auto: true });   // 판매글의 공식 공연명·공연장·아티스트 영문명으로 공식 정보도 이어서 찾는다
+  }
+  // 캡처와 같은 글로 확인된 판매글의 값으로 칸을 채운다. 캡처 글자 인식보다 정확하므로 자동으로 채운 칸은 고쳐 쓰고,
+  // 사용자가 직접 고친 칸은 그대로 둔다. 채운 칸 수를 돌려준다.
+  function fillFrom(id, value, source){
+    if (value == null || value === "" || state.touched[id]) return false;
+    var input = document.getElementById(id);
+    if (input.value === String(value) && state.autoFilled[id]) return false;
+    input.value = value;
+    if (input.value === ""){ return false; }
+    state.autoFilled[id] = source;
+    markFlag(id);
+    return true;
+  }
+  function applyListingData(l){
+    if (!l) return 0;
+    var n = 0;
+    if (fillFrom("titleInput", l.officialTitle || l.title, "listingData")) n++;
+    if (fillFrom("showDateInput", l.performDate, "listingData")) n++;
+    if (fillFrom("saleInput", l.price != null ? String(l.price) : "", "listingData")) n++;
+    var face = l.gradePrice != null ? l.gradePrice : l.listPrice;
+    if (fillFrom("officialPriceInput", face != null ? String(face) : "", "listingData")) n++;
+    if (fillFrom("venueInput", l.venue, "listingData")) n++;
+    if (fillFrom("seatInput", l.seatLabel, "listingData")) n++;
+    if (fillFrom("postDateInput", l.createdAt, "listingData")) n++;
+    if (l.platform === "ticketbay" && !state.touched.platform && state.platform !== "티켓베이"){ pickPlatform("티켓베이", "listingData"); n++; }
+    // 공식 정보(KOPIS)를 찾을 때 쓸 다른 이름: 아티스트 영문명("EXO")·한글명, 티켓베이 공연명
+    state.listingHints = { alts: (l.aliases || []).concat(l.artist ? [l.artist] : []).concat(l.title && l.title !== fieldVal("titleInput") ? [l.title] : []) };
+    updateFooter();
+    return n;
   }
   // 대조 결과 한 덩어리: 판정 + 항목별 ✓/✗ (+ 다른 글이면 다른 항목 목록)
   function listingBlock(result, l, withUse){
@@ -1342,7 +1421,12 @@
       // 주소 칸에 있는 글을 대조한 결과
       if (v.status === "checking") msg = "넣은 주소의 판매글을 캡처와 대조하는 중이에요...";
       else if (v.status === "error") msg = v.message;
-      else { msg = "넣은 주소의 판매글을 캡처와 대조했어요."; box.appendChild(listingBlock(v.result, v.listing)); }
+      else {
+        msg = (v.result && v.result.same && listing.filled)
+          ? "캡처와 같은 판매글을 찾아 주소와 판매글 정보(" + listing.filled + "개 항목)를 채웠어요."
+          : "넣은 주소의 판매글을 캡처와 대조했어요.";
+        box.appendChild(listingBlock(v.result, v.listing));
+      }
     } else if (url){
       msg = isTicketbayUrl(url) ? "넣은 주소를 캡처와 대조할게요..." : "지금은 티켓베이 판매글 주소만 대조할 수 있어요.";
     } else {
