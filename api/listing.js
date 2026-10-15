@@ -23,7 +23,10 @@ function send(res, status, body, cacheSeconds) {
 // 화면에 돌려줄 판매글 값 (판매자 내부 번호·설명글 등은 넣지 않는다)
 function publicListing(l) {
   return { platform: l.platform, id: l.id, url: l.url, title: l.title, performDate: l.performDate, price: l.price,
-    totalPrice: l.totalPrice, listPrice: l.listPrice, quantity: l.quantity, seatText: l.seatText, createdAt: l.createdAt, status: l.status };
+    totalPrice: l.totalPrice, listPrice: l.listPrice, quantity: l.quantity, seatText: l.seatText, seatLabel: l.seatLabel,
+    createdAt: l.createdAt, status: l.status,
+    // 신고서 채우기용 공연 정보 (티켓베이 공연 소개글·아티스트 이름·좌석 등급 정가)
+    officialTitle: l.officialTitle || "", venue: l.venue || "", artist: l.artist || "", aliases: l.aliases || [], gradePrice: l.gradePrice == null ? null : l.gradePrice };
 }
 function captureFrom(q) {
   return { listingNumber: q.get("number") || "", price: q.get("price") || "", showDate: q.get("date") || "",
@@ -68,7 +71,8 @@ function createHandler(opts) {
       if (!pd) continue;   // 이 공연에는 그날 회차가 없다
       const grade = LM.parseSeat(capture.seat).grade;
       const gradeOk = grade && ((info.seat_grade_list || []).some((g) => String(g.name).toUpperCase() === grade));
-      const items = await client.listListings(cat.id, { depth1Id: info.depth1_id, performDate: String(pd.real_date).replace("T", " "), grade: gradeOk ? grade : "" }, 3);
+      const items = await client.listListings(cat.id, { depth1Id: info.depth1_id, performDate: String(pd.real_date).replace("T", " "), grade: gradeOk ? grade : "" }, 3, info);
+      items.forEach((l) => { if (!l.venue) l.venue = cat.location; });
       checked += items.length;
       const same = items.map((l) => ({ l, r: judge(capture, l) })).filter((x) => x.r.same);
       if (same.length) {

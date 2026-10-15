@@ -33,8 +33,31 @@ function nextData(html) {
 
 function minute(v) { return v ? String(v).replace(" ", "T").slice(0, 16) : ""; }
 
-// 판매글 원본 → 대조에 필요한 값만
-function normalize(p, title) {
+// 좌석 문구를 신고서에 쓰기 좋게: "플로어석 (Floor) 스탠딩석 (Standing seat) ONE구역(존/블럭) 5nnROW" → "플로어석 스탠딩석 ONE구역 5nn열"
+function seatLabel(p) {
+  const clean = (s) => String(s || "").replace(/\s*\([A-Za-z][^)]*\)/g, "").replace(/\(존\/블[럭록]\)/g, "").replace(/(\S)ROW\b/gi, "$1열").replace(/\s+/g, " ").trim();
+  const grade = clean(p.grade);
+  return [clean(p.floor), grade ? (/석/.test(grade) ? grade : grade + "석") : "", clean(p.name)].filter(Boolean).join(" ");
+}
+
+// 공연(카테고리) 정보에서 신고서 채우기에 쓸 값: 공식 공연명·공연장(티켓베이가 적어 둔 소개글), 아티스트 이름·영문명, 좌석 등급 정가
+//   contents 예: "EXO PLANET #6 - EXhOrizon [dot] -\n2026.11.06 - 2026.11.08\nKSPO DOME"
+//   depth2_name 예: "엑소 (EXO)"
+function categoryExtras(info, grade) {
+  if (!info) return {};
+  const lines = String(info.contents || "").split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  const officialTitle = lines[0] ? lines[0].replace(/\s*-\s*$/, "").trim() : "";
+  const venue = lines.slice(1).filter((l) => !/\d{4}\s*[.\-]\s*\d{1,2}\s*[.\-]\s*\d{1,2}/.test(l)).pop() || "";
+  const artistRaw = String(info.depth2_name || "");
+  const aliases = (artistRaw.match(/\(([^)]+)\)/g) || []).map((x) => x.slice(1, -1).trim()).filter(Boolean);
+  const grades = info.seat_grade_list || (info.seat_map && info.seat_map.GRADE) || [];
+  const g = grades.find((x) => String(x.name).trim() === String(grade || "").trim());
+  return { officialTitle, venue, artist: artistRaw.replace(/\s*\([^)]*\)\s*/g, " ").trim(), aliases,
+           gradePrice: g && g.price != null ? Number(g.price) : null };
+}
+
+// 판매글 원본 → 대조·채우기에 필요한 값만
+function normalize(p, title, info) {
   const rowDigits = String(p.seat_number || "").match(/\d{1,3}/);
   const num = /(\d{1,3})\s*번(?!대)/.exec(p.name || "");
   const floor = /(\d{1,2})\s*층/.exec(p.floor || "") ? /(\d{1,2})\s*층/.exec(p.floor)[1] : (/플로어|floor/i.test(p.floor || "") ? "플로어" : "");
@@ -57,8 +80,10 @@ function normalize(p, title) {
     },
     // 등급이 "S"처럼 짧으면 "S석", "스탠딩석 (Standing seat)"처럼 이미 석이 붙어 있으면 그대로
     seatText: [p.floor, p.grade ? (/석/.test(p.grade) ? p.grade : p.grade + "석") : "", (p.name || "").trim()].filter(Boolean).join(" "),
+    seatLabel: seatLabel(p),
     status: p.product_status || "",
-    createdAt: minute(p.created_at)
+    createdAt: minute(p.created_at),
+    ...categoryExtras(info, p.grade)
   };
 }
 
@@ -100,7 +125,7 @@ function createClient(opts) {
   async function getListing(id) {
     const r = await get(`/product/view/${encodeURIComponent(id)}`);
     if (r.notFound || !r.data || !r.data.info) return null;
-    return normalize(r.data.info, r.data.categoryInfo && r.data.categoryInfo.category_name);
+    return normalize(r.data.info, r.data.categoryInfo && r.data.categoryInfo.category_name, r.data.categoryInfo);
   }
 
   // 공연명으로 티켓베이 공연(카테고리) 찾기
@@ -122,7 +147,7 @@ function createClient(opts) {
 
   // 회차·좌석 등급으로 좁힌 판매글 목록 (한 번에 50개씩, 최대 maxPages번)
   // filter: {depth1Id, performDate:"YYYY-MM-DD HH:mm:ss", grade:"S"}
-  async function listListings(categoryId, filter, maxPages) {
+  async function listListings(categoryId, filter, maxPages, info) {
     const items = [];
     for (let offset = 0; offset < (maxPages || 3); offset++) {
       const body = { category_id: Number(categoryId), size: 50, offset };
@@ -135,7 +160,7 @@ function createClient(opts) {
       let page;
       try { page = JSON.parse(r.text).data; } catch { throw Object.assign(new Error("티켓베이 목록 형식을 읽지 못했어요"), { code: "format" }); }
       if (!page) break;
-      (page.content || []).forEach((p) => items.push(normalize(p)));
+      (page.content || []).forEach((p) => items.push(normalize(p, info && info.category_name, info)));
       if (page.last || !(page.content || []).length) break;
     }
     return items;
@@ -153,4 +178,4 @@ function createClient(opts) {
   return { getListing, searchCategories, getCategoryInfo, listListings, pickPerformDate, requestCount: () => requests };
 }
 
-module.exports = { parseUrl, isTicketbayUrl, normalize, createClient, ORIGIN };
+module.exports = { parseUrl, isTicketbayUrl, normalize, categoryExtras, seatLabel, createClient, ORIGIN };

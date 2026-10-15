@@ -2,7 +2,10 @@
 // KOPIS 키는 웹페이지에 넣으면 누구나 볼 수 있고, KOPIS는 브라우저에서 바로 부를 수도 없어서(http, 교차 출처 차단)
 // 이 함수가 대신 불러 정리된 JSON으로 돌려준다. 키는 Vercel 환경변수 KOPIS_API_KEY 에만 둔다.
 //
-//   GET /api/kopis?title=공연명&date=2026-11-22   → { ok, candidates:[공연 정보...] }
+//   GET /api/kopis?title=공연명&date=2026-11-22[&alt=EXO,엑소][&venue=KSPO DOME]   → { ok, candidates:[공연 정보...] }
+//       alt: 다른 이름(아티스트 영문명 등) — KOPIS는 정식 공연명("EXO PLANET #6, …")으로 등록돼 있어
+//            중고거래 표기("엑소 2026 - 서울")로는 안 찾아지는 경우가 많다.
+//       venue: 공연장 — 이름으로 못 찾으면 그날 공연 중 공연장이 같은 것을 찾는다.
 //   GET /api/kopis?ping=1                          → 키 설정·KOPIS 연결 점검 (키 값은 보여주지 않는다)
 "use strict";
 
@@ -62,15 +65,22 @@ function createHandler(opts) {
     }
   }
 
-  async function search(key, title, date) {
+  async function search(key, title, date, alts, venue) {
     const [stdate, eddate] = searchPeriod(date);
     const base = { service: key, stdate, eddate, cpage: "1", rows: "20" };
-    let list = M.parseList(await kopis("/pblprfr", { ...base, shprfnm: title }));
-    if (!list.length) {
-      const kw = fallbackKeyword(title);
-      if (kw) list = M.parseList(await kopis("/pblprfr", { ...base, shprfnm: kw }));
+    // 공연명 → 다른 이름들 → 공연명의 가장 긴 낱말 순으로, 찾을 때까지
+    const keys = [title, ...alts, fallbackKeyword(title)].filter((k, i, a) => k && k.length >= 2 && a.indexOf(k) === i).slice(0, 5);
+    let list = [];
+    for (const k of keys) {
+      list = M.parseList(await kopis("/pblprfr", { ...base, shprfnm: k }));
+      if (list.length) break;
     }
-    const top = M.rankCandidates(list, title, date).slice(0, MAX_DETAILS);
+    // 이름으로 못 찾으면: 그날(공연일을 알 때) 공연 중 공연장이 같은 것
+    if (!list.length && venue && date) {
+      const day = M.parseList(await kopis("/pblprfr", { ...base, rows: "100" }));
+      list = day.filter((p) => M.sameVenue(venue, p.venue));
+    }
+    const top = M.rankCandidates(list, title, date, { alts, venue }).slice(0, MAX_DETAILS);
     const details = await Promise.all(top.map((p) =>
       kopis("/pblprfr/" + encodeURIComponent(p.id), { service: key })
         .then(M.parseDetail)
@@ -105,12 +115,14 @@ function createHandler(opts) {
 
     const title = (q.get("title") || "").trim().slice(0, 80);
     const date = (q.get("date") || "").trim();
+    const alts = (q.get("alt") || "").split(",").map((s) => s.trim().slice(0, 40)).filter(Boolean).slice(0, 3);
+    const venue = (q.get("venue") || "").trim().slice(0, 60);
     if (title.length < 2) return send(res, 400, { ok: false, error: "no_title", message: "공연명을 두 글자 이상 넣어주세요." });
     if (!key) return send(res, 503, { ok: false, error: "no_key", message: "공식 정보 확인이 아직 설정되지 않았어요." });
 
     try {
-      const candidates = await search(key, title, date);
-      return send(res, 200, { ok: true, query: { title, date }, candidates }, true);
+      const candidates = await search(key, title, date, alts, venue);
+      return send(res, 200, { ok: true, query: { title, date, alts, venue }, candidates }, true);
     } catch (e) {
       const timeout = e.name === "AbortError";
       return send(res, 502, { ok: false, error: timeout ? "timeout" : (e.code || "kopis_failed"),
