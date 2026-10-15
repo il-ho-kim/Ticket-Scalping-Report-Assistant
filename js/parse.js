@@ -304,6 +304,9 @@
 
     var mUrl = t.match(/https?:\/\/[^\s"'<>()]+/);
     if (mUrl) out.url = mUrl[0];
+    // 판매글 상품번호 (티켓베이 등): "상품번호 5659303910765" — 보이면 이 번호로 주소를 바로 찾는다
+    var mNo = /상품\s*번호\s*[:：]?\s*(\d{10,16})/.exec(t);
+    if (mNo) out.listingNumber = mNo[1];
 
     // @아이디 (메일 주소 a@b.com 은 뺀다)
     var mAt = /(^|[^A-Za-z0-9._%+\-])(@[A-Za-z0-9_.\-]{2,30})/.exec(t);
