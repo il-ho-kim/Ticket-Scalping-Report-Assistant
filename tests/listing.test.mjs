@@ -24,6 +24,7 @@ test("좌석 문구 나누기", () => {
   assert.deepEqual(LM.parseSeat("2층 (2F) S석 23구역(존/블럭) 11ROW"), { floor: "2", grade: "S", area: "23", row: "11" });
   assert.deepEqual(LM.parseSeat("스탠딩 R구역 120번대"), { area: "R" });
   assert.deepEqual(LM.parseSeat(""), {});
+  assert.equal(LM.parseSeat("ONE구역 | 5nn열").area, "ONE");   // 실제 티켓베이 판매글 (엑소 2026 - 서울)
 });
 
 test("티켓베이 판매글 정리", () => {
@@ -34,6 +35,8 @@ test("티켓베이 판매글 정리", () => {
   assert.deepEqual(l.seat, { floor: "플로어", grade: "R", area: "A", row: "12", num: "7" });
   assert.equal(l.price, 250000);
   assert.equal(l.createdAt, "2026-10-08T12:02");
+  assert.match(TB.normalize({ display_number: "1", floor: "플로어석 (Floor)", grade: "스탠딩석 (Standing seat)", name: "ONE구역(존/블럭) 5nnROW" }).seatText,
+    /^플로어석 \(Floor\) 스탠딩석 \(Standing seat\) ONE구역/);
 });
 
 test("대조: 같은 글은 하나뿐, 다른 글은 다른 항목을 알려준다", () => {

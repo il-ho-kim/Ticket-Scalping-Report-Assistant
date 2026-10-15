@@ -918,13 +918,18 @@
     window.TicketOCR.recognize(files, function(p){ $("#extractStatus").textContent = ocrProgressText(p); })
       .then(function(results){
         ocrStatus = "done";
-        lastOcrText = results.map(function(r, i){ return "(" + (i + 1) + ") " + r.text.trim(); }).join("\n\n");
+        lastOcrText = results.map(function(r, i){
+          return (r.texts || [r.text]).map(function(t, j){ return "(" + (i + 1) + "-" + (j + 1) + ") " + t.trim(); }).join("\n\n");
+        }).join("\n\n");
         // 캡처마다 따로 해석해야 "3시간 전" 같은 상대 시각을 그 캡처를 찍은 시각 기준으로 풀 수 있다.
         // 여러 장에서 같은 항목이 나오면 앞의 캡처 값을 쓴다.
         var merged = {};
         results.forEach(function(r){
-          var d = localParse(r.text, { now: new Date(r.lastModified) });
-          Object.keys(d).forEach(function(k){ if (merged[k] == null) merged[k] = d[k]; });
+          // 한 장을 여러 방식으로 읽은 글자(r.texts)도 앞 방식 우선으로 합친다
+          (r.texts || [r.text]).forEach(function(text){
+            var d = localParse(text, { now: new Date(r.lastModified) });
+            Object.keys(d).forEach(function(k){ if (merged[k] == null) merged[k] = d[k]; });
+          });
         });
         var found = applyExtraction(merged, "capture");
         // 붙여넣은 글에는 글자 인식 오류가 없으니, 같은 항목은 그 값으로 덮는다.

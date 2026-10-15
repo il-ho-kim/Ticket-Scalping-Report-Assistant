@@ -68,7 +68,8 @@ const OCR_CONFIG = {
   scriptUrl: `${base}/node_modules/tesseract.js/dist/tesseract.min.js`,
   workerPath: `${base}/node_modules/tesseract.js/dist/worker.min.js`,
   corePath: `${base}/node_modules/tesseract.js-core`,
-  langPath: `${base}/__lang`
+  langPath: `${base}/__lang`,
+  ...(process.env.OCR_PRE ? JSON.parse(process.env.OCR_PRE) : {})   // 전처리 설정을 바꿔 비교할 때: OCR_PRE='{"gamma":2}'
 };
 
 // ---------- 테스트 케이스 ----------

@@ -10,7 +10,13 @@
     workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@" + VERSION + "/dist/worker.min.js",
     corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@" + VERSION,
     langPath: null,   // null이면 언어별 jsdelivr 경로(@tesseract.js-data/<lang>/4.0.0_best_int)를 쓴다
-    langs: ["kor", "eng"]
+    langs: ["kor", "eng"],
+    // 전처리: 짧은 변이 upscaleBelow보다 작으면 upscale배로 키우고, 감마(gamma>1)로 회색 글씨를 진하게 만든다.
+    // 한 장을 passes에 적힌 방식대로 여러 번 읽는다. 1번은 기본, 2번은 회색 글씨용(감마 2).
+    // 실제 티켓베이 앱 캡처는 라벨·공연명·상품번호 라벨이 회색이라 기본 방식으로는 통째로 건너뛰고,
+    // 반대로 감마를 주면 합성 캡처의 일부 글씨가 깨져서, 두 결과를 함께 쓴다(앞 결과 우선, 빈 항목만 뒤 결과로 채움).
+    upscaleBelow: 1000, upscale: 2, gamma: 1,
+    passes: [{}, { gamma: 2, upscaleBelow: 0 }]
   }, window.TICKET_OCR_CONFIG || {});
 
   var scriptPromise = null, workerPromise = null;
@@ -62,9 +68,10 @@
 
   // 회색조로 바꾸고, 작은 캡처는 키우고, 다크모드(어두운 바탕)는 반전한다. 이진화는 하지 않는다 —
   // Tesseract의 LSTM 인식기는 회색조에서 더 잘 읽는다.
-  function preprocess(img){
+  function preprocess(img, pass){
+    var opt = Object.assign({ upscaleBelow: config.upscaleBelow, upscale: config.upscale, gamma: config.gamma }, pass);
     var w = img.naturalWidth, h = img.naturalHeight;
-    var scale = Math.min(w, h) < 1000 ? 2 : 1;
+    var scale = Math.min(w, h) < opt.upscaleBelow ? opt.upscale : 1;
     var maxSide = 4000;
     if (Math.max(w, h) * scale > maxSide) scale = maxSide / Math.max(w, h);
     var cw = Math.round(w * scale), ch = Math.round(h * scale);
@@ -80,13 +87,15 @@
       sum += y;
     }
     var dark = sum / n < 110;
-    if (dark){ for (var j = 0; j < px.length; j += 4){ px[j] = px[j + 1] = px[j + 2] = 255 - px[j]; } }
+    var lut = new Uint8ClampedArray(256);
+    for (var k = 0; k < 256; k++){ var v = dark ? 255 - k : k; lut[k] = Math.round(255 * Math.pow(v / 255, opt.gamma)); }
+    for (var j = 0; j < px.length; j += 4){ px[j] = px[j + 1] = px[j + 2] = lut[Math.round(px[j])]; }
     ctx.putImageData(data, 0, 0);
     return { canvas: canvas, dark: dark, scale: scale };
   }
 
   // files: File 목록. onProgress({phase: "prepare"|"read", index, total, progress})
-  // 결과: [{text, confidence, lastModified, dark}]
+  // 결과: [{texts:[방식별 글자], text(합친 것), lastModified, dark}]
   function recognize(files, onProgress){
     var total = files.length, current = 0, results = [];
     progressCb = function(m){
@@ -102,14 +111,17 @@
           current = i;
           if (onProgress) onProgress({ phase: "read", index: i, total: total, progress: 0 });
           return loadImage(file).then(function(img){
-            var pre = preprocess(img);
-            return worker.recognize(pre.canvas).then(function(res){
-              results.push({
-                text: (res.data && res.data.text) || "",
-                confidence: res.data && res.data.confidence,
-                lastModified: file.lastModified || Date.now(),
-                dark: pre.dark
+            var passes = (config.passes && config.passes.length) ? config.passes : [{}];
+            var texts = [], dark = false, p = Promise.resolve();
+            passes.forEach(function(pass){
+              p = p.then(function(){
+                var pre = preprocess(img, pass);
+                dark = pre.dark;
+                return worker.recognize(pre.canvas).then(function(res){ texts.push((res.data && res.data.text) || ""); });
               });
+            });
+            return p.then(function(){
+              results.push({ texts: texts, text: texts.join("\n\n"), lastModified: file.lastModified || Date.now(), dark: dark });
             });
           });
         });

@@ -55,7 +55,8 @@ function normalize(p, title) {
       row: rowDigits && p.seat_number_type === "ROW" ? String(Number(rowDigits[0])) : "",
       num: num ? String(Number(num[1])) : ""
     },
-    seatText: [p.floor, p.grade ? p.grade + "석" : "", (p.name || "").trim()].filter(Boolean).join(" "),
+    // 등급이 "S"처럼 짧으면 "S석", "스탠딩석 (Standing seat)"처럼 이미 석이 붙어 있으면 그대로
+    seatText: [p.floor, p.grade ? (/석/.test(p.grade) ? p.grade : p.grade + "석") : "", (p.name || "").trim()].filter(Boolean).join(" "),
     status: p.product_status || "",
     createdAt: minute(p.created_at)
   };

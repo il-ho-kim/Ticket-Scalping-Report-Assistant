@@ -24,7 +24,7 @@
     else if (/플로어|floor/i.test(s)) out.floor = "플로어";
     var g = /(VVIP|VIP|SR|OP|[RSAB])\s*석/i.exec(s);
     if (g) out.grade = g[1].toUpperCase();
-    var a = /([A-Za-z]{1,2}\d{0,2}|\d{1,3})\s*(?:구역|블록|블럭|존|zone)/i.exec(s);
+    var a = /([A-Za-z]{1,4}\d{0,2}|\d{1,3})\s*(?:구역|블록|블럭|존|zone)/i.exec(s);   // "ONE구역"처럼 영문 구역명도 있다
     if (a) out.area = norm(a[1]);
     var r = /(\d{1,3})\s*(?:열|ROW|row)/.exec(s);
     if (r) out.row = String(Number(r[1]));

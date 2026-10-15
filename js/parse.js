@@ -15,7 +15,8 @@
     ["중고나라", /중고나라|joonggonara/i],
     ["번개장터", /번개장터|번장|bunjang|번개톡|번개페이/i],
     ["당근마켓", /당근마켓|당근|매너온도|daangn/i],
-    ["티켓베이", /티켓베이|ticketbay/i],
+    // 티켓베이 앱 판매글 화면에는 '티켓베이' 글자가 없어서, 그 화면에만 나오는 문구로 알아본다
+    ["티켓베이", /티켓베이|ticketbay|팬파워|입장\s*안심|비교\s*담기|한\s*매\s*가격|티켓\s*수령\s*대기/i],
     ["SNS", /트위터|twitter|엑스\(x\)|인스타|instagram|디엠|\bDM\b|카톡|오픈채팅|리포스트|재게시|마음에 들어요|조회수/i]
   ];
   var VENDOR_HINTS = [
@@ -276,6 +277,9 @@
   function findTitle(text){
     var labelled = labelledRest(text, /공연\s*명|공연\s*제목|경기\s*명/, 60);
     if (labelled) return tidyTitle(labelled);
+    // 분류 경로 "콘서트 > 엑소 (EXO) > 엑소 2026 - 서울" (티켓베이 등): 마지막 칸이 공연명
+    var crumb = /^[^\n>]{1,20}>[^\n>]{1,40}>\s*([^\n>]{2,60})$/m.exec(text);
+    if (crumb) return crumb[1].trim().slice(0, 60);
     var re = /['"『「\[<〈《]([^'"』」\]>〉》\n]{2,40})['"』」\]>〉》]/g, m;
     while ((m = re.exec(text))){
       var c = m[1].trim();
