@@ -145,6 +145,16 @@
   .kopis-row .chips{ gap:6px; }
   .kopis-row .chip{ padding:5px 10px; font-size:11.5px; }
   .kopis-actions{ display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; }
+  .listing-item{ border:1.5px solid var(--border); border-radius:10px; background:var(--surface); padding:10px 11px; display:flex; flex-direction:column; gap:6px; }
+  .listing-verdict{ align-self:flex-start; font-size:12px; font-weight:700; padding:2px 9px; border-radius:99px; }
+  .listing-verdict.same{ background:var(--good-bg); color:var(--good); }
+  .listing-verdict.diff{ background:var(--need-bg); color:var(--accent); }
+  .listing-url{ font-size:11.5px; color:var(--muted); overflow-wrap:anywhere; }
+  .listing-checks{ display:flex; flex-wrap:wrap; gap:4px 10px; font-size:11.5px; }
+  .listing-checks .ok{ color:var(--good); }
+  .listing-checks .no{ color:var(--accent); }
+  .listing-checks .ref{ color:var(--muted); }
+  .listing-reasons{ margin:0; padding-left:16px; font-size:12px; line-height:1.55; color:var(--text); }
   .mask-card{ display:flex; align-items:center; gap:10px; border:1.5px solid var(--border); border-radius:10px; background:var(--surface); padding:11px 13px; }
   .mask-text{ display:flex; flex-direction:column; gap:1px; flex:1; }
   .mask-title{ font-size:12.5px; }
@@ -408,6 +418,16 @@
             <div class="field-label-row"><span class="field-label">게시글 URL *</span><span class="field-flag" id="flag-urlInput"></span></div>
             <input class="input" id="urlInput" placeholder="예: https://... (게시글 공유 링크)">
           </div>
+          <div class="route-card" id="listingCard" hidden>
+            <span class="route-label">게시글 주소 찾기 · 티켓베이</span>
+            <span class="route-name">캡처와 같은 판매글 찾기</span>
+            <span class="route-desc" id="listingStatus"></span>
+            <div class="kopis-list" id="listingResults" hidden></div>
+            <span class="route-desc" id="listingGuide" hidden>티켓베이 앱의 판매글 화면에서 공유 버튼으로 링크를 복사한 뒤, 위 '게시글 URL' 칸에 붙여넣어 주세요. 붙여넣으면 캡처와 같은 글인지 바로 확인해 드려요.</span>
+            <div class="kopis-actions">
+              <button class="filebtn" id="listingSearchBtn">캡처로 주소 찾기</button>
+            </div>
+          </div>
         </div>
 
         <div class="route-card" id="kopisCard">
@@ -505,6 +525,7 @@
 <script src="js/parse.js"></script>
 <script src="js/ocr.js"></script>
 <script src="js/kopis-match.js"></script>
+<script src="js/listing-match.js"></script>
 <script>
 (function(){
   "use strict";
@@ -695,6 +716,7 @@
       "상세            : " + (sampleDebug || "-"),
       "캡처 글자 인식   : " + ocrStatus + (ocrDebug ? " — " + ocrDebug : ""),
       "공식 정보(KOPIS) : " + (kopis ? kopis.status + (kopis.debug ? " — " + kopis.debug : "") : "-"),   // 처음 그릴 때는 아직 준비 전
+      "게시글 주소 찾기 : " + (listing ? listing.status + " / 대조 " + listing.verify.status + (listing.debug ? " — " + listing.debug : "") : "-"),
       "프레임 안       : " + (window.top !== window.self ? "예" : "아니오"),
       "화면 폭         : " + window.innerWidth + "px",
       "UA              : " + navigator.userAgent
@@ -896,13 +918,18 @@
     window.TicketOCR.recognize(files, function(p){ $("#extractStatus").textContent = ocrProgressText(p); })
       .then(function(results){
         ocrStatus = "done";
-        lastOcrText = results.map(function(r, i){ return "(" + (i + 1) + ") " + r.text.trim(); }).join("\n\n");
+        lastOcrText = results.map(function(r, i){
+          return (r.texts || [r.text]).map(function(t, j){ return "(" + (i + 1) + "-" + (j + 1) + ") " + t.trim(); }).join("\n\n");
+        }).join("\n\n");
         // 캡처마다 따로 해석해야 "3시간 전" 같은 상대 시각을 그 캡처를 찍은 시각 기준으로 풀 수 있다.
         // 여러 장에서 같은 항목이 나오면 앞의 캡처 값을 쓴다.
         var merged = {};
         results.forEach(function(r){
-          var d = localParse(r.text, { now: new Date(r.lastModified) });
-          Object.keys(d).forEach(function(k){ if (merged[k] == null) merged[k] = d[k]; });
+          // 한 장을 여러 방식으로 읽은 글자(r.texts)도 앞 방식 우선으로 합친다
+          (r.texts || [r.text]).forEach(function(text){
+            var d = localParse(text, { now: new Date(r.lastModified) });
+            Object.keys(d).forEach(function(k){ if (merged[k] == null) merged[k] = d[k]; });
+          });
         });
         var found = applyExtraction(merged, "capture");
         // 붙여넣은 글에는 글자 인식 오류가 없으니, 같은 항목은 그 값으로 덮는다.
@@ -928,7 +955,8 @@
   state.touched = {};
   // 자동으로 채운 값의 출처. "capture": 캡처에서 읽음 (Claude 또는 글자 인식) | "text": 붙여넣은 글에서 읽음
   // | "kopis": 공연예술통합전산망 공식 정보로 사용자가 [바꾸기]를 눌러 고침
-  var SOURCE_LABEL = { capture: "캡처에서 읽음", text: "글에서 읽음", kopis: "공식 정보로 고침" };
+  // | "listing": 캡처와 같은 글로 확인된 판매글 주소
+  var SOURCE_LABEL = { capture: "캡처에서 읽음", text: "글에서 읽음", kopis: "공식 정보로 고침", listing: "캡처와 대조함" };
   function setFlag(el, src){
     el.textContent = SOURCE_LABEL[src] || "";
     el.className = "field-flag" + (SOURCE_LABEL[src] ? " auto" : "");
@@ -957,7 +985,11 @@
     if (data.postDate && setAuto("postDateInput", data.postDate, source)) hit++;
     if (data.platform && PLATFORM_CODE[data.platform] && !state.touched.platform){ pickPlatform(data.platform, source); hit++; }
     if (data.vendor && VENDOR_CODE[data.vendor] && !state.touched.vendor){ pickVendor(data.vendor, source); hit++; }
-    if (hit > 0) scheduleKopis();   // 읽어서 채웠으면 공식 정보도 한 번 찾아본다
+    if (data.listingNumber) state.listingNumber = String(data.listingNumber);
+    if (hit > 0){
+      scheduleKopis();     // 읽어서 채웠으면 공식 정보도 한 번 찾아본다
+      scheduleListing();   // 티켓베이 글이고 주소가 비어 있으면 주소도 찾아본다
+    }
     return hit > 0;
   }
   function markFlag(id){
@@ -970,7 +1002,10 @@
   }
   ["titleInput","saleInput","sellerInput","urlInput","postDateInput","officialPriceInput","showDateInput","venueInput","seatInput"].forEach(function(id){
     var el = document.getElementById(id);
-    el.addEventListener("input", function(){ state.touched[id] = true; delete state.autoFilled[id]; markFlag(id); updateFooter(); renderKopis(); });
+    el.addEventListener("input", function(){
+      state.touched[id] = true; delete state.autoFilled[id]; markFlag(id); updateFooter(); renderKopis();
+      if (id === "urlInput") scheduleVerify(); else renderListing();
+    });
   });
 
   function pickPlatform(name, source){
@@ -981,6 +1016,7 @@
     });
     $("#platformOtherInput").hidden = name !== "기타";
     if (!source) state.touched.platform = true;
+    setTimeout(renderListing, 0);   // 티켓베이를 고르면 주소 찾기 카드가 나온다
     state.autoFilled["platform"] = source || undefined;
     setFlag($("#flag-platform"), source);
     updateFooter();
@@ -1166,6 +1202,179 @@
     statusEl.textContent = msg;
   }
   $("#kopisSearchBtn").addEventListener("click", kopisSearch);
+
+  // ---------- 게시글 주소 찾기·대조 (지금은 티켓베이) ----------
+  // 서버 함수(api/listing.js)가 티켓베이 공개 페이지를 대신 조회한다. 판정은 두 가지뿐: 같은 글 / 다른 글.
+  // status: idle | searching | found | none | need_more | unavailable | error
+  // verify.status: idle | checking | done | error
+  var listing = { status: "idle", candidates: [], req: 0, debug: "", message: "",
+                  verify: { status: "idle", url: "", result: null, listing: null, message: "", req: 0 } };
+  var listingTimer = null, verifyTimer = null;
+
+  function listingCapture(){
+    return { title: fieldVal("titleInput"), date: fieldVal("showDateInput"), price: fieldVal("saleInput"),
+             seat: fieldVal("seatInput"), postDate: fieldVal("postDateInput"), number: state.listingNumber || "" };
+  }
+  function isTicketbayUrl(u){ return /^https?:\/\/([a-z]+\.)?ticketbay\.co\.kr\//i.test(u || ""); }
+  function listingRelevant(){ return state.platform === "티켓베이" || isTicketbayUrl(fieldVal("urlInput")); }
+  function listingQuery(params){
+    var q = [];
+    Object.keys(params).forEach(function(k){ if (params[k]) q.push(k + "=" + encodeURIComponent(params[k])); });
+    return "api/listing?" + q.join("&");
+  }
+  function listingFetch(params){
+    return fetch(listingQuery(params)).then(function(r){
+      return r.json().catch(function(){ return { ok: false, error: "not_json" }; })
+        .then(function(body){ return { code: r.status, body: body || {} }; });
+    });
+  }
+  function scheduleListing(){
+    clearTimeout(listingTimer);
+    listingTimer = setTimeout(function(){
+      if (state.platform === "티켓베이" && !fieldVal("urlInput")) listingSearch();
+      else renderListing();
+    }, 350);
+  }
+  function scheduleVerify(){
+    clearTimeout(verifyTimer);
+    listing.verify = { status: "idle", url: "", result: null, listing: null, message: "", req: listing.verify.req };
+    renderListing();
+    verifyTimer = setTimeout(function(){
+      var u = fieldVal("urlInput");
+      if (/^https?:\/\//i.test(u) && listingRelevant()) listingVerify(u);
+    }, 600);
+  }
+  function listingSearch(){
+    var reqId = ++listing.req;
+    listing.status = "searching"; listing.candidates = []; listing.message = "";
+    renderListing();
+    listingFetch(Object.assign({ action: "search" }, listingCapture())).then(function(x){
+      if (reqId !== listing.req) return;
+      var b = x.body;
+      if (!b.ok){
+        listing.status = b.error === "need_more" ? "need_more" : ((b.error === "not_json" || x.code === 404) ? "unavailable" : "error");
+        listing.message = b.message || "";
+        listing.debug = (b.error || x.code) + (b.message ? " — " + b.message : "");
+      } else {
+        listing.candidates = b.candidates || [];
+        listing.status = listing.candidates.length ? "found" : "none";
+        listing.debug = "확인한 판매글 " + (b.checked || 0) + "개, 요청 " + (b.requests || 0) + "번";
+      }
+      renderListing(); renderDiag();
+    }).catch(function(err){
+      if (reqId !== listing.req) return;
+      listing.status = "unavailable"; listing.debug = String((err && err.message) || err);
+      renderListing(); renderDiag();
+    });
+  }
+  function listingVerify(url){
+    var v = listing.verify, reqId = ++v.req;
+    listing.verify = { status: "checking", url: url, result: null, listing: null, message: "", req: reqId };
+    renderListing();
+    var c = listingCapture();
+    listingFetch({ action: "verify", url: url, title: c.title, date: c.date, price: c.price, seat: c.seat, postDate: c.postDate, number: c.number })
+      .then(function(x){
+        if (reqId !== listing.verify.req) return;
+        var b = x.body;
+        if (!b.ok) listing.verify = { status: "error", url: url, result: null, listing: null, req: reqId,
+          message: (b.error === "not_json" || x.code === 404) ? "지금은 주소 대조를 쓸 수 없어요." : (b.message || "대조하지 못했어요.") };
+        else {
+          listing.verify = { status: "done", url: url, result: b.result, listing: b.listing, message: "", req: reqId };
+          if (b.result && b.result.same && fieldVal("urlInput") === url){ state.autoFilled.urlInput = "listing"; markFlag("urlInput"); }
+        }
+        renderListing(); renderDiag();
+      })
+      .catch(function(err){
+        if (reqId !== listing.verify.req) return;
+        listing.verify = { status: "error", url: url, result: null, listing: null, req: reqId, message: "지금은 주소 대조를 쓸 수 없어요." };
+        listing.debug = String((err && err.message) || err);
+        renderListing(); renderDiag();
+      });
+  }
+  function useListing(c){
+    var input = $("#urlInput");
+    input.value = c.listing.url;
+    delete state.touched.urlInput;
+    state.autoFilled.urlInput = "listing";
+    markFlag("urlInput");
+    listing.verify = { status: "done", url: c.listing.url, result: c.result, listing: c.listing, message: "", req: ++listing.verify.req };
+    updateFooter(); renderListing();
+  }
+  // 대조 결과 한 덩어리: 판정 + 항목별 ✓/✗ (+ 다른 글이면 다른 항목 목록)
+  function listingBlock(result, l, withUse){
+    var box = el("div", "listing-item");
+    box.appendChild(el("span", "listing-verdict " + (result.same ? "same" : "diff"), result.same ? "캡처와 같은 글이에요" : "캡처와 다른 글이에요"));
+    if (l){
+      box.appendChild(el("span", "listing-url", l.url));
+      box.appendChild(el("span", "kopis-note", [l.title, l.seatText].filter(Boolean).join(" · ")));
+    }
+    var checks = el("div", "listing-checks");
+    (result.checks || []).forEach(function(c){
+      var text = (c.decisive ? (c.ok ? "✓ " : "✗ ") : (c.ok ? "참고 ✓ " : "참고 ✗ ")) + c.label + " " + (c.listing || c.capture || "");
+      checks.appendChild(el("span", c.decisive ? (c.ok ? "ok" : "no") : "ref", text));
+    });
+    box.appendChild(checks);
+    if (!result.same && result.reasons && result.reasons.length){
+      var ul = el("ul", "listing-reasons");
+      result.reasons.forEach(function(r){ ul.appendChild(el("li", null, r)); });
+      box.appendChild(ul);
+    }
+    if (withUse){
+      var b = el("button", "kopis-apply", "이 주소 쓰기");
+      b.style.alignSelf = "flex-start";
+      b.addEventListener("click", withUse);
+      box.appendChild(b);
+    }
+    return box;
+  }
+  function renderListing(){
+    var card = $("#listingCard");
+    if (!card) return;
+    card.hidden = !listingRelevant();
+    if (card.hidden) return;
+    var statusEl = $("#listingStatus"), box = $("#listingResults"), guide = $("#listingGuide"), btn = $("#listingSearchBtn");
+    var url = fieldVal("urlInput"), v = listing.verify;
+    btn.disabled = listing.status === "searching";
+    btn.textContent = listing.status === "idle" ? "캡처로 주소 찾기" : "다시 찾기";
+    box.innerHTML = "";
+    var msg;
+    if (url && v.url === url && v.status !== "idle"){
+      // 주소 칸에 있는 글을 대조한 결과
+      if (v.status === "checking") msg = "넣은 주소의 판매글을 캡처와 대조하는 중이에요...";
+      else if (v.status === "error") msg = v.message;
+      else { msg = "넣은 주소의 판매글을 캡처와 대조했어요."; box.appendChild(listingBlock(v.result, v.listing)); }
+    } else if (url){
+      msg = isTicketbayUrl(url) ? "넣은 주소를 캡처와 대조할게요..." : "지금은 티켓베이 판매글 주소만 대조할 수 있어요.";
+    } else {
+      msg = {
+        idle: "캡처에서 읽은 공연·회차·판매가·좌석으로 티켓베이에서 같은 판매글을 찾아요.",
+        searching: "티켓베이에서 캡처와 같은 판매글을 찾는 중이에요...",
+        found: listing.candidates.length > 1
+          ? "캡처와 같은 글이 " + listing.candidates.length + "개 있어요. 등록 시각을 보고 맞는 글을 골라주세요."
+          : "캡처와 같은 판매글을 찾았어요.",
+        none: "캡처와 같은 글을 찾지 못했어요. 판매가 끝났거나 내용이 바뀌었을 수 있어요.",
+        need_more: "판매 가격·공연 일시를 채우면 찾을 수 있어요.",
+        unavailable: "지금은 주소 찾기를 쓸 수 없어요.",
+        error: listing.message || "티켓베이에서 정보를 받지 못했어요. 잠시 뒤 다시 시도해주세요."
+      }[listing.status];
+      if (listing.status === "found"){
+        listing.candidates.forEach(function(c){
+          var blk = listingBlock(c.result, c.listing, function(){ useListing(c); });
+          if (c.listing.createdAt) blk.insertBefore(el("span", "kopis-note", "등록 " + c.listing.createdAt.replace("T", " ")), blk.children[2] || null);
+          box.appendChild(blk);
+        });
+      }
+    }
+    box.hidden = !box.children.length;
+    guide.hidden = !(!url && (listing.status === "none" || listing.status === "unavailable" || listing.status === "error"))
+      && !(url && v.status === "done" && v.result && !v.result.same);
+    statusEl.textContent = msg;
+  }
+  $("#listingSearchBtn").addEventListener("click", function(){
+    var u = fieldVal("urlInput");
+    if (u && /^https?:\/\//i.test(u)) listingVerify(u); else listingSearch();
+  });
+  renderListing();
   renderKopis();
 
   function evidenceComplete(){

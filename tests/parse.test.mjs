@@ -168,6 +168,46 @@ NOLE|Z! 예매내역 있어요`, { now: at("2026-10-08T15:00") });
   assert.equal(receipt.price, undefined);
 });
 
+test("티켓베이 판매글: 상품번호, 'YYYY-MM-DD (요일) HH:mm', 등록 n시간 전", () => {
+  const d = localParse(`티켓베이
+하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울
+등록 3시간 전
+공연일시 2026-11-22 (일) 18:00
+좌석 플로어 R석 A구역 12열 7번
+정가 154,000원
+판매가 250,000원
+상품번호 9000000000001`, { now: at("2026-10-08T15:02") });
+  assert.equal(d.platform, "티켓베이");
+  assert.equal(d.listingNumber, "9000000000001");
+  assert.equal(d.showDate, "2026-11-22T18:00");
+  assert.equal(d.postDate, "2026-10-08T12:02");
+  assert.equal(d.seat, "플로어 R석 A구역 12열 7번");
+  assert.equal(d.price, 250000);
+  assert.equal(d.officialPrice, 154000);
+});
+
+test("실제 티켓베이 앱 캡처(회색 글씨용으로 읽은 글자): 분류 경로 공연명, 앱 문구로 플랫폼", () => {
+  // 2026-10-15 사용자 제공 실제 캡처를 감마 2로 읽은 OCR 원문 (오인식 포함)
+  const d = localParse(`2:29 8 %※@ㆍ                       NEF €D
+<                         엑소 2026 - 서울                       0
+상품 정보                                 상품번호 5129460096431
+콘서트 > 엑소 (EXO) > 엑소 2026-서울
+공연 일시 2026.11.06 19:00
+ONE®4 | 500열
+ABHEIM (Standing seat) | 플로어석 (Floor)
+실물티켓
+티켓 보유 여부                  티켓수령 대기 중 2026.10.21
+한 매 가격                                        420,000원
+수량                                                         1매
+총 가격             420,000원
+팬파워 1,260『0 적립`, { now: at("2026-10-15T14:29") });
+  assert.equal(d.platform, "티켓베이");
+  assert.equal(d.listingNumber, "5129460096431");
+  assert.equal(d.title, "엑소 2026-서울");
+  assert.equal(d.showDate, "2026-11-06T19:00");
+  assert.equal(d.price, 420000);
+});
+
 test("판매자 아이디: 메일 주소는 아이디로 보지 않는다", () => {
   assert.equal(localParse("문의 abc@naver.com 으로 주세요 15만원").sellerHandle, undefined);
   assert.equal(localParse("판매자 @seller_01 15만원").sellerHandle, "@seller_01");
