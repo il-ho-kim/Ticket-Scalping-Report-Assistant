@@ -1,0 +1,12 @@
+{
+  "capturedAt": "2026-10-08T15:02",
+  "fields": {
+    "titleInput": { "includes": "BLUE HOUR" },
+    "showDateInput": "2026-11-22T18:00",
+    "postDateInput": "2026-10-08T12:02",
+    "seatInput": { "includes": "A구역 12열 7번" },
+    "officialPriceInput": "154000",
+    "saleInput": "250000",
+    "platform": "티켓베이"
+  }
+}

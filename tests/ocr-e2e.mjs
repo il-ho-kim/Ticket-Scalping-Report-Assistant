@@ -32,10 +32,26 @@ const kopisHandler = createHandler({
   }
 });
 
+// /api/listing: 실제 서버 함수(api/listing.js)를 쓰되, 티켓베이 대신 tests/fixtures/ticketbay/ 가상 응답을 돌려준다
+const listingHandler = require("../api/listing.js").createHandler({
+  delayMs: 0,
+  fetch: async (url) => {
+    const u = new URL(url), tb = (f) => join(fixtures, "ticketbay", f);
+    let f = null;
+    if (u.pathname === "/search") f = /BLUE|하늘빛/.test(u.searchParams.get("keyword") || "") ? "search-blue-hour.html" : "search-empty.html";
+    else if (u.pathname === "/product/990001/list/1") f = "category-990001.html";
+    else if (u.pathname === "/ticketbayApi/product/v1/public/products") f = "products.json";
+    else if (u.pathname.startsWith("/product/view/")) f = `view-${u.pathname.split("/").pop()}.html`;
+    if (!f || !existsSync(tb(f))) return { ok: false, status: 404, text: async () => readFileSync(tb("not-found.html"), "utf8") };
+    return { ok: true, status: 200, text: async () => readFileSync(tb(f), "utf8") };
+  }
+});
+
 // ---------- 정적 서버 ----------
 const server = http.createServer((req, res) => {
   let path = decodeURIComponent(new URL(req.url, "http://x").pathname);
   if (path === "/api/kopis") return kopisHandler(req, res);
+  if (path === "/api/listing") return listingHandler(req, res);
   // 언어 데이터는 언어별 패키지에 나뉘어 있어 한 경로로 모아 준다: /__lang/kor.traineddata.gz
   const lang = /^\/__lang\/(\w+)\.traineddata\.gz$/.exec(path);
   const file = lang
@@ -206,6 +222,57 @@ for (const c of cases) {
   console.log(`  비교: ${before.rows.join(", ")}`);
   console.log(`  공연명 바꾼 뒤: ${afterTitle.title} [${afterTitle.flag}]`);
   console.log(`  부산으로 모두 바꾼 뒤: 장소 ${afterAll.venue} [${afterAll.venueFlag}], 일시 ${afterAll.show}`);
+  if (errors.length) console.log("  ! 페이지 오류: " + errors.join(" | "));
+  if (!ok) gateFailures++;
+  await page.close();
+}
+
+// 게시글 주소 찾기·대조: 티켓베이 캡처 → 자동 검색 → [이 주소 쓰기] → 다른 글 주소 붙여넣기 → '다른 글'
+{
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.goto(base + "/index.html");
+  await page.click("#primaryBtn"); await page.click("#optConcert"); await page.click("#primaryBtn"); await page.click("#primaryBtn");
+  const b64 = readFileSync(join(fixtures, "captures", "ticketbay.png")).toString("base64");
+  await page.evaluate(({ b64 }) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], "ticketbay.png", { type: "image/png", lastModified: new Date("2026-10-08T15:02").getTime() }));
+    const input = document.getElementById("fileInput"); input.files = dt.files; input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, { b64 });
+  await page.waitForFunction(() => !document.getElementById("extractBtn").disabled);
+  await page.click("#extractBtn");
+  await page.waitForSelector("#listingResults:not([hidden]) .listing-item", { timeout: 180000 });
+  const found = await page.evaluate(() => ({
+    status: document.getElementById("listingStatus").textContent,
+    items: Array.from(document.querySelectorAll("#listingResults .listing-item")).map((x) => x.innerText.replace(/\n+/g, " | "))
+  }));
+  await page.locator("#listingCard").screenshot({ path: join(outDir, "listing-found.png") });
+  await page.click("#listingResults .kopis-apply");
+  const used = await page.evaluate(() => ({ url: document.getElementById("urlInput").value, flag: document.getElementById("flag-urlInput").textContent }));
+  // 다른 판매글 주소를 붙여넣으면 '다른 글'과 다른 항목이 나와야 한다
+  await page.fill("#urlInput", "https://www.ticketbay.co.kr/product/view/9000000000002");
+  await page.waitForSelector("#listingResults .listing-verdict.diff", { timeout: 15000 });
+  const pasted = await page.evaluate(() => ({
+    verdict: document.querySelector("#listingResults .listing-verdict").textContent,
+    reasons: Array.from(document.querySelectorAll("#listingResults .listing-reasons li")).map((x) => x.textContent),
+    guide: !document.getElementById("listingGuide").hidden, flag: document.getElementById("flag-urlInput").textContent
+  }));
+  await page.locator("#listingCard").screenshot({ path: join(outDir, "listing-diff.png") });
+  // 같은 글 주소를 다시 붙여넣으면 '같은 글'과 '캡처와 대조함' 표시
+  await page.fill("#urlInput", "https://www.ticketbay.co.kr/product/view/9000000000001");
+  await page.waitForSelector("#listingResults .listing-verdict.same", { timeout: 15000 });
+  const repasted = await page.evaluate(() => document.getElementById("flag-urlInput").textContent);
+  const body = await page.evaluate(() => document.body.innerText);
+  const ok = found.items.length === 1 && /캡처와 같은 글이에요/.test(found.items[0]) && /9000000000001/.test(found.items[0])
+    && used.url === "https://www.ticketbay.co.kr/product/view/9000000000001" && used.flag === "캡처와 대조함"
+    && pasted.verdict === "캡처와 다른 글이에요" && pasted.reasons.some((r) => /판매가가 달라요/.test(r)) && pasted.guide && pasted.flag === ""
+    && repasted === "캡처와 대조함" && !/추정/.test(body) && !errors.length;
+  console.log(`\n■ 게시글 주소 찾기  ${ok ? "✓" : "✗"}`);
+  console.log(`  찾기: ${found.status} / ${found.items.join(" // ").slice(0, 160)}`);
+  console.log(`  쓰기: ${used.url} [${used.flag}]`);
+  console.log(`  다른 글 붙여넣기: ${pasted.verdict} — ${pasted.reasons.join(" / ")} (안내 ${pasted.guide ? "보임" : "숨김"})`);
+  console.log(`  같은 글 다시 붙여넣기: [${repasted}]`);
   if (errors.length) console.log("  ! 페이지 오류: " + errors.join(" | "));
   if (!ok) gateFailures++;
   await page.close();
