@@ -3,7 +3,7 @@
 
 ## 문서
 
-- [PRD (v0.2)](docs/PRD.md)
+- [PRD (v0.3)](docs/PRD.md)
 
 ## 실행
 
