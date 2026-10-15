@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dbs>
+  <db>
+    <mt20id>PF900002</mt20id>
+    <prfnm><![CDATA[하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 부산]]></prfnm>
+    <prfpdfrom>2026.12.13</prfpdfrom>
+    <prfpdto>2026.12.13</prfpdto>
+    <fcltynm>벡스코 (오디토리움)</fcltynm>
+    <poster>http://www.kopis.or.kr/upload/pfmPoster/PF_PF900002.gif</poster>
+    <area>부산광역시</area>
+    <genrenm>대중음악</genrenm>
+    <openrun>N</openrun>
+    <prfstate>공연예정</prfstate>
+  </db>
+  <db>
+    <mt20id>PF900001</mt20id>
+    <prfnm><![CDATA[하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울]]></prfnm>
+    <prfpdfrom>2026.11.21</prfpdfrom>
+    <prfpdto>2026.11.22</prfpdto>
+    <fcltynm>고척스카이돔 (고척스카이돔)</fcltynm>
+    <poster>http://www.kopis.or.kr/upload/pfmPoster/PF_PF900001.gif</poster>
+    <area>서울특별시</area>
+    <genrenm>대중음악</genrenm>
+    <openrun>N</openrun>
+    <prfstate>공연예정</prfstate>
+  </db>
+</dbs>

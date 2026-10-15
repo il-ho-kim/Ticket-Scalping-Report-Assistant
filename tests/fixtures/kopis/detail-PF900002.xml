@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<dbs>
+  <db>
+    <mt20id>PF900002</mt20id>
+    <prfnm><![CDATA[하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 부산]]></prfnm>
+    <prfpdfrom>2026.12.13</prfpdfrom>
+    <prfpdto>2026.12.13</prfpdto>
+    <fcltynm>벡스코 (오디토리움)</fcltynm>
+    <pcseguidance>스탠딩R석 143,000원, 스탠딩S석 121,000원</pcseguidance>
+    <genrenm>대중음악</genrenm>
+    <prfstate>공연예정</prfstate>
+    <relates>
+      <relate><relatenm>티켓링크</relatenm><relateurl>https://www.ticketlink.co.kr/product/60000002</relateurl></relate>
+    </relates>
+    <dtguidance>일요일(19:00)</dtguidance>
+  </db>
+</dbs>
