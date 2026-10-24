@@ -617,7 +617,7 @@
   });
   function computeVerdict(){
     var a = state.answers;
-    if (a.q1==null || a.q2==null) { $("#resultCard").hidden = true; return; }
+    if (a.q1==null || a.q2==null || a.q3==null) { $("#resultCard").hidden = true; return; }
     var title, desc, sentence;
     if (a.q1 === "yes"){
       title = "부정구매 가능성이 있어요";
