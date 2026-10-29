@@ -176,6 +176,29 @@ test("연도 + 아티스트 검색: 그해 공연을 지난 공연까지 모두,
   assert.equal(r3.body.error, "no_query");
 });
 
+test("연도 검색: 동시에 3개까지만 부르고, 거절되면 한 번 더 부른다", async () => {
+  let active = 0, peak = 0, calls = 0;
+  const fetch = async (url) => {
+    calls++; active++; peak = Math.max(peak, active);
+    await new Promise((r) => setTimeout(r, 5));
+    active--;
+    // 3월 조회는 처음 한 번 거절(503)
+    if (/stdate=20260301/.test(url) && !fetch.retried){ fetch.retried = true; return { ok: false, status: 503, text: async () => "busy" }; }
+    return { ok: true, status: 200, text: async () => "<dbs></dbs>" };
+  };
+  const h = createHandler({ fetch, getKey: () => "K", retryDelayMs: 0 });
+  const r = await call(h, "/api/kopis?q=" + encodeURIComponent("2026 하늘빛"));
+  assert.equal(r.body.ok, true);
+  assert.ok(peak <= 3, "동시 요청 " + peak);
+  assert.equal(calls, 13);   // 12달 + 거절된 3월 한 번 더
+
+  // 계속 거절되면 상태 코드를 알려준다 (원인 확인용)
+  const h2 = createHandler({ fetch: async () => ({ ok: false, status: 429, text: async () => "" }), getKey: () => "K", retryDelayMs: 0 });
+  const r2 = await call(h2, "/api/kopis?q=" + encodeURIComponent("2026 하늘빛"));
+  assert.equal(r2.status, 502);
+  assert.equal(r2.body.status, 429);
+});
+
 test("공연 하나 상세 (?id=)", async () => {
   const k = fakeKopis((u) => `detail-${u.pathname.split("/").pop()}.xml`);
   const h = createHandler({ fetch: k.fetch, getKey: () => "K" });

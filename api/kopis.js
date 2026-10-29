@@ -17,6 +17,19 @@ const BASE = "http://www.kopis.or.kr/openApi/restful";
 const MAX_DETAILS = 5;
 const MAX_RESULTS = 60;
 const MAX_KEYWORDS = 4;
+const CONCURRENCY = 3;     // KOPIS는 한꺼번에 많이 부르면 거절한다 — 동시에 3개까지만
+const RETRY_DELAY_MS = 400;
+
+// items를 limit개씩만 동시에 처리한다
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 const TIMEOUT_MS = 8000;
 
 function ymd(d) {
@@ -62,7 +75,18 @@ function createHandler(opts) {
   const doFetch = (opts && opts.fetch) || ((...a) => fetch(...a));
   const getKey = (opts && opts.getKey) || (() => process.env.KOPIS_API_KEY);
 
+  // 거절(429·5xx)이나 시간 초과면 잠깐 쉬고 한 번 더 부른다
   async function kopis(path, params) {
+    try {
+      return await kopisOnce(path, params);
+    } catch (e) {
+      const retryable = e.name === "AbortError" || (e.code === "kopis_http" && (e.status === 429 || e.status >= 500));
+      if (!retryable) throw e;
+      await new Promise((r) => setTimeout(r, (opts && opts.retryDelayMs != null) ? opts.retryDelayMs : RETRY_DELAY_MS));
+      return kopisOnce(path, params);
+    }
+  }
+  async function kopisOnce(path, params) {
     const url = new URL(BASE + path);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
     const ctrl = new AbortController();
@@ -70,7 +94,7 @@ function createHandler(opts) {
     try {
       const r = await doFetch(url.toString(), { signal: ctrl.signal });
       const text = await r.text();
-      if (!r.ok) throw Object.assign(new Error("KOPIS 응답 " + r.status), { code: "kopis_http" });
+      if (!r.ok) throw Object.assign(new Error("KOPIS 응답 " + r.status), { code: "kopis_http", status: r.status });
       const err = M.parseError(text);
       if (err) throw Object.assign(new Error(err.message || "KOPIS 오류 " + err.code), { code: "kopis_error" });
       return text;
@@ -81,8 +105,8 @@ function createHandler(opts) {
 
   // 한 낱말로 한 해 전체를 찾는다: 한 달씩 12번 동시에 부르고, 같은 공연(ID)은 하나로 합친다
   async function searchYear(key, keyword, year) {
-    const lists = await Promise.all(yearWindows(year).map(([stdate, eddate]) =>
-      kopis("/pblprfr", { service: key, stdate, eddate, cpage: "1", rows: "100", shprfnm: keyword }).then(M.parseList)));
+    const lists = await mapLimit(yearWindows(year), CONCURRENCY, ([stdate, eddate]) =>
+      kopis("/pblprfr", { service: key, stdate, eddate, cpage: "1", rows: "100", shprfnm: keyword }).then(M.parseList));
     const byId = new Map();
     lists.flat().forEach((p) => { if (!byId.has(p.id)) byId.set(p.id, p); });
     return [...byId.values()];
@@ -187,7 +211,8 @@ function createHandler(opts) {
 }
 function failure(e) {
   const timeout = e && e.name === "AbortError";
-  return { ok: false, error: timeout ? "timeout" : ((e && e.code) || "kopis_failed"),
+  // status: KOPIS가 돌려준 HTTP 상태 (원인 확인용, 키는 들어가지 않는다)
+  return { ok: false, error: timeout ? "timeout" : ((e && e.code) || "kopis_failed"), status: (e && e.status) || null,
     message: timeout ? "공연예술통합전산망 응답이 늦어요. 잠시 뒤 다시 시도해주세요." : "공연예술통합전산망에서 정보를 받지 못했어요." };
 }
 
