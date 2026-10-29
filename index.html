@@ -131,6 +131,9 @@
 
   .kopis-list{ display:flex; flex-direction:column; gap:8px; margin-top:4px; }
   .kopis-cand{ text-align:left; border:1px solid var(--border); border-radius:8px; background:var(--surface); padding:8px 12px; font-family:inherit; font-size:15px; line-height:1.5; color:var(--text); cursor:pointer; }
+  .kopis-search{ display:flex; gap:8px; margin-top:4px; }
+  .kopis-search .input{ flex:1; min-width:0; }
+  .kopis-cand .kopis-match{ display:inline-block; margin-left:6px; font-size:13px; color:var(--good); }
   .kopis-cand.picked{ border-color:var(--good); background:var(--good-bg); }
   .kopis-cand small{ display:block; margin-top:4px; font-size:14px; color:var(--muted); }
   .kopis-compare{ display:flex; flex-direction:column; margin-top:4px; }
@@ -437,10 +440,13 @@
           <span class="route-label">공연예술통합전산망(KOPIS)</span>
           <span class="route-name">공식 공연 정보로 확인</span>
           <span class="route-desc" id="kopisStatus"></span>
+          <div class="kopis-search">
+            <input class="input" id="kopisQuery" placeholder="예: 2026 실리카겔, 2026 EXO" enterkeyhint="search" aria-label="연도와 아티스트로 공연 찾기">
+            <button class="filebtn" id="kopisFindBtn">찾기</button>
+          </div>
           <div class="kopis-list" id="kopisCandidates" hidden></div>
           <div class="kopis-compare" id="kopisCompare" hidden></div>
           <div class="kopis-actions">
-            <button class="filebtn" id="kopisSearchBtn">공식 정보 찾기</button>
             <button class="filebtn primary-ghost" id="kopisApplyAll" hidden>다른 항목 모두 바꾸기</button>
           </div>
         </div>
@@ -1076,7 +1082,8 @@
   // 서버 함수(api/kopis.js)가 공연예술통합전산망을 대신 불러준다. 공식 정보와 다른 항목은
   // 차이를 보여주기만 하고, 사용자가 [바꾸기]를 눌러야 바뀐다.
   // status: idle | searching | ready | none | unavailable | error
-  var kopis = { status: "idle", candidates: [], picked: null, req: 0, debug: "", message: "" };
+  // mode: "auto"(버튼 한 번 흐름, 후보에 상세 포함) | "list"(연도+아티스트 검색, 고를 때 상세를 받음)
+  var kopis = { status: "idle", mode: "auto", candidates: [], picked: null, req: 0, debug: "", message: "", query: null, queryTouched: false };
   var kopisTimer = null;
   var KOPIS_FIELD = { title: "titleInput", venue: "venueInput", showDate: "showDateInput", officialPrice: "officialPriceInput" };
 
@@ -1090,7 +1097,7 @@
     if (title.length < 2 || !window.KopisMatch){ if (auto) reportMissing(); return; }
     var reqId = ++kopis.req;
     var date = fieldVal("showDateInput").slice(0, 10);
-    kopis.status = "searching"; kopis.candidates = []; kopis.picked = null; kopis.message = ""; kopis.applied = 0;
+    kopis.status = "searching"; kopis.mode = "auto"; kopis.candidates = []; kopis.picked = null; kopis.message = ""; kopis.applied = 0;
     renderKopis();
     // 다른 이름(티켓베이의 아티스트 영문명 등)과 공연장도 함께 보낸다: KOPIS는 정식 공연명으로 등록돼 있어 이름만으로는 못 찾는 경우가 많다
     var hints = state.listingHints || {};
@@ -1127,6 +1134,80 @@
         renderKopis(); renderDiag();
         if (auto) reportMissing();
       });
+  }
+  // 검색칸 기본값: 공연 일시의 연도(없으면 올해) + 아티스트 이름(판매글에서 얻은 것) 또는 공연명
+  function defaultKopisQuery(){
+    var year = (fieldVal("showDateInput").slice(0, 4)) || String(new Date().getFullYear());
+    var h = state.listingHints || {};
+    var name = [h.artist].concat(h.aliases || []).filter(Boolean).join(" ");
+    if (!name){
+      name = fieldVal("titleInput").replace(/20\d{2}/g, " ").replace(/\s*-\s*[가-힣A-Za-z]{1,6}$/, "")   // "엑소 2026 - 서울" → "엑소"
+        .replace(/['"‘’“”<>〈〉《》\[\]()]/g, " ").replace(/\s+/g, " ").trim();
+    }
+    return name ? year + " " + name : "";
+  }
+  // 연도 + 아티스트로 그해 공연 목록 찾기 (지난 공연 포함). 고르면 상세를 받아 비교한다.
+  function kopisFind(){
+    var q = $("#kopisQuery").value.trim();
+    if (!q || !window.KopisMatch) return;
+    var reqId = ++kopis.req;
+    var date = fieldVal("showDateInput").slice(0, 10);
+    kopis.status = "searching"; kopis.mode = "list"; kopis.candidates = []; kopis.picked = null; kopis.message = ""; kopis.applied = 0;
+    kopis.query = KopisMatch.parseQuery(q);
+    renderKopis();
+    kopisFetch("api/kopis?q=" + encodeURIComponent(q)).then(function(x){
+      if (reqId !== kopis.req) return;
+      var b = x.body;
+      if (!b.ok){ kopisFail(b, x.code); }
+      else {
+        var list = b.results || [];
+        // 공연일이 기간에 드는 공연을 맨 위로 (나머지는 날짜순 그대로)
+        list = list.filter(function(p){ return date && KopisMatch.inPeriod(date, p); })
+          .concat(list.filter(function(p){ return !(date && KopisMatch.inPeriod(date, p)); }));
+        kopis.candidates = list;
+        kopis.query.year = (b.query && b.query.year) || kopis.query.year;
+        kopis.status = list.length ? "ready" : "none";
+        kopis.debug = "연도 검색 " + list.length + "개" + (b.total > list.length ? " (전체 " + b.total + "개)" : "");
+        var only = autoPick(list, date);
+        if (only){ renderKopis(); kopisPick(only); return; }
+      }
+      renderKopis(); renderDiag();
+    }).catch(function(err){
+      if (reqId !== kopis.req) return;
+      kopis.status = "unavailable"; kopis.debug = String((err && err.message) || err);
+      renderKopis(); renderDiag();
+    });
+  }
+  // 목록에서 고른 공연: 상세(가격·공연 시간·예매처)가 없으면 받아 온다
+  function kopisPick(p){
+    kopis.picked = p;
+    if (p.prices){ renderKopis(); return; }
+    var reqId = kopis.req;
+    renderKopis();
+    kopisFetch("api/kopis?id=" + encodeURIComponent(p.id)).then(function(x){
+      if (reqId !== kopis.req || !kopis.picked || kopis.picked.id !== p.id) return;
+      if (x.body.ok && x.body.detail){
+        var d = x.body.detail;
+        kopis.candidates = kopis.candidates.map(function(c){ return c.id === d.id ? d : c; });
+        kopis.picked = d;
+      } else kopis.message = x.body.message || "공연 상세를 받지 못했어요.";
+      renderKopis(); renderDiag();
+    }).catch(function(){
+      if (reqId !== kopis.req) return;
+      kopis.message = "공연 상세를 받지 못했어요.";
+      renderKopis();
+    });
+  }
+  function kopisFetch(url){
+    return fetch(url).then(function(r){
+      return r.json().catch(function(){ return { ok: false, error: "not_json" }; })
+        .then(function(body){ return { code: r.status, body: body || {} }; });
+    });
+  }
+  function kopisFail(b, code){
+    kopis.status = (b.error === "no_key" || b.error === "not_json" || code === 404) ? "unavailable" : "error";
+    kopis.message = b.message || "";
+    kopis.debug = (b.error || code) + (b.message ? " — " + b.message : "");
   }
   function autoApplyKopis(perf){
     var n = 0;
@@ -1170,34 +1251,43 @@
   }
   function renderKopis(){
     var statusEl = $("#kopisStatus"), list = $("#kopisCandidates"), cmp = $("#kopisCompare");
-    var btn = $("#kopisSearchBtn"), all = $("#kopisApplyAll");
+    var btn = $("#kopisFindBtn"), all = $("#kopisApplyAll"), qInput = $("#kopisQuery");
     if (!statusEl) return;
-    var title = fieldVal("titleInput");
-    btn.disabled = kopis.status === "searching" || title.length < 2;
-    btn.textContent = kopis.status === "idle" ? "공식 정보 찾기" : "공식 정보 다시 찾기";
+    // 사용자가 검색칸을 직접 고치기 전까지는 입력된 정보로 기본 검색어를 채워 둔다
+    if (!kopis.queryTouched && kopis.status !== "searching"){ var dq = defaultKopisQuery(); if (dq) qInput.value = dq; }
+    btn.disabled = kopis.status === "searching" || qInput.value.trim().length < 2;
 
     var msg = {
-      idle: "공연명을 채우면 공식 정보와 비교해 다른 부분을 알려드려요.",
-      searching: "공연예술통합전산망에서 찾는 중이에요...",
-      none: "비슷한 공연을 찾지 못했어요. 공연명을 고친 뒤 다시 찾아보세요.",
+      idle: "연도와 아티스트를 넣고 [찾기]를 누르면, 그해 공연을 모두 보여드려요.",
+      searching: kopis.mode === "list" ? "공연예술통합전산망에서 " + ((kopis.query && kopis.query.year) || "올해") + "년 공연을 찾는 중이에요..." : "공연예술통합전산망에서 찾는 중이에요...",
+      none: kopis.mode === "list"
+        ? ((kopis.query && kopis.query.year) || "") + "년 공연 중 '" + ((kopis.query && kopis.query.phrase) || "") + "'이(가) 들어간 공연을 찾지 못했어요. 영문 이름도 함께 넣어 보세요. 예: 2026 실리카겔 SILICA GEL"
+        : "비슷한 공연을 찾지 못했어요. 아래 검색칸에 연도와 아티스트를 넣어 찾아보세요.",
       unavailable: "지금은 공식 정보 확인을 쓸 수 없어요. 다른 기능은 그대로 쓸 수 있어요.",
       error: kopis.message || "공연예술통합전산망에서 정보를 받지 못했어요. 잠시 뒤 다시 시도해주세요."
     }[kopis.status];
 
     list.innerHTML = "";
-    list.hidden = !(kopis.status === "ready" && kopis.candidates.length > 1);
+    list.hidden = !(kopis.status === "ready" && (kopis.candidates.length > 1 || kopis.mode === "list"));
+    var showDay = fieldVal("showDateInput").slice(0, 10);
     kopis.candidates.forEach(function(p){
       var b = el("button", "kopis-cand" + (kopis.picked && kopis.picked.id === p.id ? " picked" : ""), p.title);
+      if (showDay && KopisMatch.inPeriod(showDay, p)) b.appendChild(el("span", "kopis-match", "공연일과 맞음"));
       b.appendChild(el("small", null, (p.from === p.to ? p.from : p.from + " ~ " + p.to) + " · " + KopisMatch.venueName(p.venue)));
-      b.addEventListener("click", function(){ kopis.picked = p; renderKopis(); });
+      b.addEventListener("click", function(){ kopisPick(p); });
       list.appendChild(b);
     });
 
     cmp.innerHTML = "";
-    cmp.hidden = !(kopis.status === "ready" && kopis.picked);
+    cmp.hidden = !(kopis.status === "ready" && kopis.picked && kopis.picked.prices);
     all.hidden = true;
     if (kopis.status === "ready"){
-      if (!kopis.picked) msg = "비슷한 공연이 " + kopis.candidates.length + "개 있어요. 맞는 공연을 골라주세요.";
+      if (!kopis.picked){
+        msg = kopis.mode === "list"
+          ? ((kopis.query && kopis.query.year) || "") + "년 공연 " + kopis.candidates.length + "개를 찾았어요. 맞는 공연을 골라주세요."
+          : "비슷한 공연이 " + kopis.candidates.length + "개 있어요. 맞는 공연을 골라주세요.";
+      }
+      else if (!kopis.picked.prices){ msg = kopis.message || "고른 공연의 공식 정보를 받는 중이에요..."; }
       else {
         var rows = KopisMatch.compare(kopisInput(), kopis.picked);
         var diffs = rows.filter(function(r){ return !r.same && r.suggest != null; });
@@ -1241,7 +1331,9 @@
     }
     statusEl.textContent = msg;
   }
-  $("#kopisSearchBtn").addEventListener("click", function(){ kopisSearch(); });
+  $("#kopisFindBtn").addEventListener("click", kopisFind);
+  $("#kopisQuery").addEventListener("input", function(){ kopis.queryTouched = true; $("#kopisFindBtn").disabled = this.value.trim().length < 2; });
+  $("#kopisQuery").addEventListener("keydown", function(e){ if (e.key === "Enter"){ e.preventDefault(); kopisFind(); } });
 
   // ---------- 게시글 주소 찾기·대조 (지금은 티켓베이) ----------
   // 서버 함수(api/listing.js)가 티켓베이 공개 페이지를 대신 조회한다. 판정은 두 가지뿐: 같은 글 / 다른 글.
@@ -1378,7 +1470,8 @@
     if (fillFrom("postDateInput", l.createdAt, "listingData")) n++;
     if (l.platform === "ticketbay" && !state.touched.platform && state.platform !== "티켓베이"){ pickPlatform("티켓베이", "listingData"); n++; }
     // 공식 정보(KOPIS)를 찾을 때 쓸 다른 이름: 아티스트 영문명("EXO")·한글명, 티켓베이 공연명
-    state.listingHints = { alts: (l.aliases || []).concat(l.artist ? [l.artist] : []).concat(l.title && l.title !== fieldVal("titleInput") ? [l.title] : []) };
+    state.listingHints = { artist: l.artist || "", aliases: l.aliases || [],
+                           alts: (l.aliases || []).concat(l.artist ? [l.artist] : []).concat(l.title && l.title !== fieldVal("titleInput") ? [l.title] : []) };
     updateFooter();
     return n;
   }

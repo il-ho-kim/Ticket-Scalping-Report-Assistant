@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const M = require("../js/kopis-match.js");
-const { createHandler, searchPeriod } = require("../api/kopis.js");
+const { createHandler, searchPeriod, yearWindows } = require("../api/kopis.js");
 const fx = (name) => readFileSync(new URL(`./fixtures/kopis/${name}`, import.meta.url), "utf8");
 
 test("공연목록·상세 XML 정리", () => {
@@ -137,6 +137,62 @@ const blueHour = (u) => {
   return `detail-${id}.xml`;
 };
 
+// 목록 조회에 쓴 검색어(같은 낱말은 한 번만, 부른 순서대로)
+const uniqKeywords = (calls) => [...new Set(calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams.get("shprfnm")))];
+
+test("검색어 나누기", () => {
+  assert.deepEqual(M.parseQuery("2026 실리카겔"), { year: 2026, phrase: "실리카겔", words: ["실리카겔"] });
+  assert.deepEqual(M.parseQuery("실리카겔 SILICA GEL 2025"), { year: 2025, phrase: "실리카겔 SILICA GEL", words: ["실리카겔", "SILICA", "GEL"] });
+  assert.deepEqual(M.parseQuery("EXO"), { year: null, phrase: "EXO", words: ["EXO"] });
+  assert.equal(M.parseQuery("  2026  ").phrase, "");
+});
+
+test("연도 + 아티스트 검색: 그해 공연을 지난 공연까지 모두, 날짜순으로", async () => {
+  // 가상 아티스트 '하늘빛'의 2026년 공연 3건: 2월(지난 공연), 11월 서울, 12월 부산 — 달마다 다른 목록을 돌려준다
+  const k = fakeKopis((u) => {
+    if (!u.pathname.endsWith("/pblprfr")) return `detail-${u.pathname.split("/").pop()}.xml`;
+    if (!/하늘빛|HANEULBIT/.test(u.searchParams.get("shprfnm") || "")) return null;
+    const month = u.searchParams.get("stdate").slice(4, 6);
+    return month === "02" ? "list-haneulbit-feb.xml" : (month === "11" || month === "12") ? "list-blue-hour.xml" : null;
+  });
+  const h = createHandler({ fetch: k.fetch, getKey: () => "K" });
+  const r = await call(h, "/api/kopis?q=" + encodeURIComponent("2026 하늘빛"));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.query.year, 2026);
+  assert.deepEqual(r.body.results.map((p) => p.id), ["PF900003", "PF900001", "PF900002"]);   // 날짜순, 11·12월에 겹쳐 나온 공연은 한 번만
+  assert.equal(r.body.results[0].from, "2026-02-14");
+  assert.equal(k.calls.filter((c) => c.includes("/pblprfr?")).length, 12);
+  assert.ok(!k.calls.some((c) => /\/pblprfr\/PF/.test(c)), "목록 검색에서는 상세를 부르지 않는다");
+  assert.match(r.headers["cache-control"], /s-maxage/);
+
+  // 한글·영문 이름을 함께 넣으면 각각 찾아 합친다
+  const k2 = fakeKopis((u) => u.pathname.endsWith("/pblprfr") && u.searchParams.get("shprfnm") === "HANEULBIT" && u.searchParams.get("stdate").slice(4, 6) === "02" ? "list-haneulbit-feb.xml" : null);
+  const r2 = await call(createHandler({ fetch: k2.fetch, getKey: () => "K" }), "/api/kopis?q=" + encodeURIComponent("2026 하늘빛 HANEULBIT"));
+  assert.deepEqual(r2.body.results.map((p) => p.id), ["PF900003"]);
+  assert.deepEqual(uniqKeywords(k2.calls), ["하늘빛 HANEULBIT", "하늘빛", "HANEULBIT"]);
+
+  // 검색어가 없으면 안내
+  const r3 = await call(h, "/api/kopis?q=2026");
+  assert.equal(r3.body.error, "no_query");
+});
+
+test("공연 하나 상세 (?id=)", async () => {
+  const k = fakeKopis((u) => `detail-${u.pathname.split("/").pop()}.xml`);
+  const h = createHandler({ fetch: k.fetch, getKey: () => "K" });
+  const r = await call(h, "/api/kopis?id=PF900003");
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.detail.title, "하늘빛 밴드 단독공연 'SPRING' 2026");
+  assert.equal(r.body.detail.prices[0].won, 99000);
+  assert.equal((await call(h, "/api/kopis?id=../etc")).body.error, "bad_id");
+});
+
+test("한 해 검색 기간", () => {
+  const w = yearWindows(2026);
+  assert.equal(w.length, 12);
+  assert.deepEqual(w[1], ["20260201", "20260228"]);
+  assert.deepEqual(w[11], ["20261201", "20261231"]);
+});
+
 test("서버 함수: 공연 검색 → 후보 상세 정보", async () => {
   const k = fakeKopis(blueHour);
   const h = createHandler({ fetch: k.fetch, getKey: () => "TESTKEY" });
@@ -146,10 +202,12 @@ test("서버 함수: 공연 검색 → 후보 상세 정보", async () => {
   assert.equal(r.body.candidates[0].id, "PF900001");
   assert.equal(r.body.candidates[0].prices.length, 3);
   assert.match(r.headers["cache-control"], /s-maxage/);
-  const listCall = new URL(k.calls[0]);
-  assert.equal(listCall.searchParams.get("stdate"), "20261122");
-  assert.equal(listCall.searchParams.get("eddate"), "20261122");
-  assert.equal(listCall.searchParams.get("service"), "TESTKEY");
+  // 공연일이 있는 해(2026)를 한 달씩 12번 나눠 찾는다
+  const listCalls = k.calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams);
+  assert.equal(listCalls.length, 12);
+  assert.deepEqual(listCalls.map((p) => p.get("stdate")).sort()[0], "20260101");
+  assert.ok(listCalls.some((p) => p.get("stdate") === "20261101" && p.get("eddate") === "20261130"));
+  assert.ok(listCalls.every((p) => p.get("service") === "TESTKEY" && p.get("shprfnm") === "BLUE HOUR"));
   assert.ok(!JSON.stringify(r.body).includes("TESTKEY"), "응답에 키가 들어가면 안 된다");
 });
 
@@ -161,7 +219,7 @@ test("서버 함수: 전체 이름으로 못 찾으면 가장 긴 낱말로 다�
   const r = await call(h, "/api/kopis?title=" + encodeURIComponent("'BLUE' 콘서트"));
   assert.equal(r.status, 200);
   assert.equal(r.body.candidates.length, 2);
-  assert.deepEqual(k.calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams.get("shprfnm")), ["'BLUE' 콘서트", "BLUE"]);
+  assert.deepEqual(uniqKeywords(k.calls), ["'BLUE' 콘서트", "BLUE"]);
 });
 
 test("서버 함수: 중고거래 표기로 못 찾으면 다른 이름(영문명)으로, 그래도 없으면 그날 같은 공연장으로", async () => {
@@ -172,7 +230,7 @@ test("서버 함수: 중고거래 표기로 못 찾으면 다른 이름(영문�
   let h = createHandler({ fetch: byAlt.fetch, getKey: () => "K" });
   let r = await call(h, "/api/kopis?title=" + encodeURIComponent("하늘빛 2026 - 서울") + "&date=2026-11-22&alt=HANEULBIT");
   assert.equal(r.body.candidates[0].id, "PF900001");
-  assert.deepEqual(byAlt.calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams.get("shprfnm")), ["하늘빛 2026 - 서울", "HANEULBIT"]);
+  assert.deepEqual(uniqKeywords(byAlt.calls), ["하늘빛 2026 - 서울", "HANEULBIT"]);
 
   // 이름으로는 아무것도 안 나오고, 그날 목록(이름 없이)에서 공연장이 같은 것만 고른다
   const byVenue = fakeKopis((u) => u.pathname.endsWith("/pblprfr")

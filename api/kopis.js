@@ -6,6 +6,8 @@
 //       alt: 다른 이름(아티스트 영문명 등) — KOPIS는 정식 공연명("EXO PLANET #6, …")으로 등록돼 있어
 //            중고거래 표기("엑소 2026 - 서울")로는 안 찾아지는 경우가 많다.
 //       venue: 공연장 — 이름으로 못 찾으면 그날 공연 중 공연장이 같은 것을 찾는다.
+//   GET /api/kopis?q=2026 실리카겔                  → 그해(연도가 없으면 올해) 공연명에 그 낱말이 들어간 공연 목록 (지난 공연 포함)
+//   GET /api/kopis?id=PF299607                      → 공연 하나의 상세(가격·공연 시간·예매처)
 //   GET /api/kopis?ping=1                          → 키 설정·KOPIS 연결 점검 (키 값은 보여주지 않는다)
 "use strict";
 
@@ -13,6 +15,8 @@ const M = require("../js/kopis-match.js");
 
 const BASE = "http://www.kopis.or.kr/openApi/restful";
 const MAX_DETAILS = 5;
+const MAX_RESULTS = 60;
+const MAX_KEYWORDS = 4;
 const TIMEOUT_MS = 8000;
 
 function ymd(d) {
@@ -29,6 +33,16 @@ function searchPeriod(date) {
   if (m) { const s = m[1] + m[2] + m[3]; return [s, s]; }
   const start = koreaToday(), end = new Date(start); end.setDate(end.getDate() + 30);
   return [ymd(start), ymd(end)];
+}
+// 한 해를 한 달씩 나눈 검색 기간 (KOPIS 목록 조회는 한 번에 볼 수 있는 기간이 짧다)
+function yearWindows(year) {
+  const out = [];
+  for (let m = 0; m < 12; m++) {
+    const last = new Date(year, m + 1, 0).getDate();
+    const mm = String(m + 1).padStart(2, "0");
+    out.push([`${year}${mm}01`, `${year}${mm}${String(last).padStart(2, "0")}`]);
+  }
+  return out;
 }
 // 공연명이 길거나 일부가 틀리면 검색이 안 될 수 있어, 가장 긴 낱말로 한 번 더 찾는다
 function fallbackKeyword(title) {
@@ -65,26 +79,41 @@ function createHandler(opts) {
     }
   }
 
-  async function search(key, title, date, alts, venue) {
-    const [stdate, eddate] = searchPeriod(date);
-    const base = { service: key, stdate, eddate, cpage: "1", rows: "20" };
-    // 공연명 → 다른 이름들 → 공연명의 가장 긴 낱말 순으로, 찾을 때까지
-    const keys = [title, ...alts, fallbackKeyword(title)].filter((k, i, a) => k && k.length >= 2 && a.indexOf(k) === i).slice(0, 5);
-    let list = [];
-    for (const k of keys) {
-      list = M.parseList(await kopis("/pblprfr", { ...base, shprfnm: k }));
-      if (list.length) break;
+  // 한 낱말로 한 해 전체를 찾는다: 한 달씩 12번 동시에 부르고, 같은 공연(ID)은 하나로 합친다
+  async function searchYear(key, keyword, year) {
+    const lists = await Promise.all(yearWindows(year).map(([stdate, eddate]) =>
+      kopis("/pblprfr", { service: key, stdate, eddate, cpage: "1", rows: "100", shprfnm: keyword }).then(M.parseList)));
+    const byId = new Map();
+    lists.flat().forEach((p) => { if (!byId.has(p.id)) byId.set(p.id, p); });
+    return [...byId.values()];
+  }
+  // 여러 낱말: 낱말마다 찾아 합친다 (한글·영문 이름을 함께 넣으면 둘 다 찾는다)
+  async function searchKeywords(key, keywords, year, stopWhenFound) {
+    const byId = new Map();
+    for (const k of keywords) {
+      (await searchYear(key, k, year)).forEach((p) => { if (!byId.has(p.id)) byId.set(p.id, p); });
+      if (stopWhenFound && byId.size) break;
     }
+    return [...byId.values()];
+  }
+  function detail(key, id) {
+    return kopis("/pblprfr/" + encodeURIComponent(id), { service: key }).then(M.parseDetail);
+  }
+
+  // 자동 흐름용: 공연명·다른 이름으로 공연일이 있는 해를 찾고, 상위 후보의 상세까지 붙여 돌려준다
+  async function search(key, title, date, alts, venue) {
+    const year = /^\d{4}/.test(date || "") ? Number(date.slice(0, 4)) : koreaToday().getFullYear();
+    // 공연명 → 다른 이름들 → 공연명의 가장 긴 낱말 순으로, 찾을 때까지
+    const keys = [title, ...alts, fallbackKeyword(title)].filter((k, i, a) => k && k.length >= 2 && a.indexOf(k) === i).slice(0, MAX_KEYWORDS);
+    let list = await searchKeywords(key, keys, year, true);
     // 이름으로 못 찾으면: 그날(공연일을 알 때) 공연 중 공연장이 같은 것
     if (!list.length && venue && date) {
-      const day = M.parseList(await kopis("/pblprfr", { ...base, rows: "100" }));
+      const [stdate, eddate] = searchPeriod(date);
+      const day = M.parseList(await kopis("/pblprfr", { service: key, stdate, eddate, cpage: "1", rows: "100" }));
       list = day.filter((p) => M.sameVenue(venue, p.venue));
     }
     const top = M.rankCandidates(list, title, date, { alts, venue }).slice(0, MAX_DETAILS);
-    const details = await Promise.all(top.map((p) =>
-      kopis("/pblprfr/" + encodeURIComponent(p.id), { service: key })
-        .then(M.parseDetail)
-        .catch(() => null)));
+    const details = await Promise.all(top.map((p) => detail(key, p.id).catch(() => null)));
     // 상세를 못 받은 공연은 목록 정보만이라도 쓴다
     return top.map((p, i) => details[i] || Object.assign({ prices: [], schedule: [], vendors: [] }, p));
   }
@@ -113,6 +142,34 @@ function createHandler(opts) {
       return send(res, 200, out);
     }
 
+    // 연도 + 아티스트 검색: 그해 공연 목록 (상세는 고를 때 ?id= 로)
+    if (q.has("q")) {
+      const pq = M.parseQuery((q.get("q") || "").slice(0, 80));
+      const keywords = [pq.phrase, ...pq.words].filter((k, i, a) => k && k.length >= 2 && a.indexOf(k) === i).slice(0, MAX_KEYWORDS);
+      if (!keywords.length) return send(res, 400, { ok: false, error: "no_query", message: "아티스트나 공연 이름을 두 글자 이상 넣어주세요. 예: 2026 실리카겔" });
+      if (!key) return send(res, 503, { ok: false, error: "no_key", message: "공식 정보 확인이 아직 설정되지 않았어요." });
+      const year = pq.year || koreaToday().getFullYear();
+      try {
+        const list = await searchKeywords(key, keywords, year, false);
+        list.sort((a, b) => String(a.from).localeCompare(String(b.from)) || String(a.title).localeCompare(String(b.title)));
+        return send(res, 200, { ok: true, query: { year, keywords }, total: list.length, results: list.slice(0, MAX_RESULTS) }, true);
+      } catch (e) {
+        return send(res, 502, failure(e));
+      }
+    }
+    if (q.has("id")) {
+      const id = (q.get("id") || "").trim();
+      if (!/^PF\d{3,12}$/.test(id)) return send(res, 400, { ok: false, error: "bad_id", message: "공연 ID가 올바르지 않아요." });
+      if (!key) return send(res, 503, { ok: false, error: "no_key", message: "공식 정보 확인이 아직 설정되지 않았어요." });
+      try {
+        const d = await detail(key, id);
+        if (!d) return send(res, 404, { ok: false, error: "not_found", message: "공연 정보를 찾지 못했어요." });
+        return send(res, 200, { ok: true, detail: d }, true);
+      } catch (e) {
+        return send(res, 502, failure(e));
+      }
+    }
+
     const title = (q.get("title") || "").trim().slice(0, 80);
     const date = (q.get("date") || "").trim();
     const alts = (q.get("alt") || "").split(",").map((s) => s.trim().slice(0, 40)).filter(Boolean).slice(0, 3);
@@ -124,13 +181,17 @@ function createHandler(opts) {
       const candidates = await search(key, title, date, alts, venue);
       return send(res, 200, { ok: true, query: { title, date, alts, venue }, candidates }, true);
     } catch (e) {
-      const timeout = e.name === "AbortError";
-      return send(res, 502, { ok: false, error: timeout ? "timeout" : (e.code || "kopis_failed"),
-        message: timeout ? "공연예술통합전산망 응답이 늦어요. 잠시 뒤 다시 시도해주세요." : "공연예술통합전산망에서 정보를 받지 못했어요." });
+      return send(res, 502, failure(e));
     }
   };
+}
+function failure(e) {
+  const timeout = e && e.name === "AbortError";
+  return { ok: false, error: timeout ? "timeout" : ((e && e.code) || "kopis_failed"),
+    message: timeout ? "공연예술통합전산망 응답이 늦어요. 잠시 뒤 다시 시도해주세요." : "공연예술통합전산망에서 정보를 받지 못했어요." };
 }
 
 module.exports = createHandler();
 module.exports.createHandler = createHandler;
 module.exports.searchPeriod = searchPeriod;
+module.exports.yearWindows = yearWindows;
