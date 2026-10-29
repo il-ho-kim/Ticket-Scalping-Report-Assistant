@@ -280,7 +280,18 @@
     return rows;
   }
 
+  // 검색어 나누기: "2026 실리카겔 SILICA GEL" → {year: 2026, phrase: "실리카겔 SILICA GEL", words: ["실리카겔","SILICA","GEL"]}
+  // 연도가 없으면 year는 null (부르는 쪽에서 올해로 본다)
+  function parseQuery(q){
+    var s = String(q || "").replace(/[\u0000-\u001f]/g, " ");
+    var y = /(?:^|\D)(20\d{2})(?:\D|$)/.exec(s);
+    var rest = (y ? s.replace(y[1], " ") : s).replace(/['"‘’“”<>〈〉《》\[\]()]/g, " ").replace(/\s+/g, " ").trim();
+    var words = rest.split(" ").filter(function(w){ return w.length >= 2; });
+    return { year: y ? Number(y[1]) : null, phrase: rest, words: words };
+  }
+
   return {
+    parseQuery: parseQuery,
     xmlTag: xmlTag, xmlBlocks: xmlBlocks, parseList: parseList, parseDetail: parseDetail, parseError: parseError,
     parsePrices: parsePrices, parseTimes: parseTimes, timesOn: timesOn, sessions: sessions, inPeriod: inPeriod,
     nameScore: nameScore, rankCandidates: rankCandidates, sameVenue: function(a, b){ return sameVenue(a, b) || sameVenue(a, venueName(b)); }, seatGrade: seatGrade, priceForGrade: priceForGrade,

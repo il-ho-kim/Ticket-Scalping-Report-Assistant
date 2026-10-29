@@ -25,7 +25,12 @@ const kopisHandler = createHandler({
   fetch: async (url) => {
     const u = new URL(url);
     let name = null;
-    if (u.pathname.endsWith("/pblprfr")) name = /BLUE/i.test(u.searchParams.get("shprfnm") || "") ? "list-blue-hour.xml" : null;
+    // 가상 아티스트 '하늘빛'의 2026년 공연: 2월(지난 공연), 11월 서울, 12월 부산 — 연도 검색은 달마다 나눠 부른다
+    if (u.pathname.endsWith("/pblprfr")) {
+      const month = (u.searchParams.get("stdate") || "").slice(4, 6);
+      name = /BLUE|하늘빛|HANEULBIT/i.test(u.searchParams.get("shprfnm") || "")
+        ? (month === "02" ? "list-haneulbit-feb.xml" : (month === "11" || month === "12") ? "list-blue-hour.xml" : null) : null;
+    }
     else name = `detail-${u.pathname.split("/").pop()}.xml`;
     const f = name && join(fixtures, "kopis", name);
     return { ok: true, status: 200, text: async () => (f && existsSync(f) ? readFileSync(f, "utf8") : "<dbs></dbs>") };
@@ -181,7 +186,7 @@ for (const c of cases) {
   await page.close();
 }
 
-// 공식 정보(KOPIS) 확인: 캡처 읽기 → 자동으로 찾기 → 확실한 공연이면 자동으로 고침 → 다른 공연을 고르면 [다른 항목 모두 바꾸기]
+// 공식 정보(KOPIS) 확인: 캡처 읽기 → 자동으로 찾기(공연일이 있는 해 전체) → 확실한 공연이면 자동으로 고침 → 다른 공연을 고르면 [다른 항목 모두 바꾸기]
 async function upload(page, file, capturedAt) {
   const b64 = readFileSync(join(fixtures, "captures", file)).toString("base64");
   await page.evaluate(({ b64, file, capturedAt }) => {
@@ -212,14 +217,15 @@ const waitAutoDone = (page) => page.waitForFunction(() => /직접 채워 주세�
   }));
   await page.screenshot({ path: join(outDir, "kopis-card.png"), fullPage: true });
   // 부산 공연으로 바꿔 고르면(사용자 선택) 다른 항목을 보여주고, [다른 항목 모두 바꾸기]로 한 번에 바꾼다
-  await page.click(".kopis-cand:nth-child(2)");
+  await page.click(".kopis-cand:has-text('부산')");
   await page.click("#kopisApplyAll");
   const afterAll = await page.evaluate(() => ({
     venue: document.getElementById("venueInput").value, venueFlag: document.getElementById("flag-venueInput").textContent,
     show: document.getElementById("showDateInput").value,
     body: document.body.innerText
   }));
-  const ok = before.cands === 2 && /서울/.test(before.picked) && before.rows.every((r) => r.endsWith("같음"))
+  // 연도 검색이라 그해 공연 3건(2월 지난 공연 포함)이 후보로 나온다
+  const ok = before.cands === 3 && /서울/.test(before.picked) && before.rows.every((r) => r.endsWith("같음"))
     && /공식 정보로 1개 항목을 고쳤어요/.test(before.status) && /직접 채워 주세요: 게시글 URL$/.test(before.extract)
     && before.title === "하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울" && before.flag === "공식 정보로 고침"
     && afterAll.venue === "벡스코 오디토리움" && afterAll.venueFlag === "공식 정보로 고침" && afterAll.show === "2026-12-13T19:00"
@@ -286,6 +292,40 @@ const waitAutoDone = (page) => page.waitForFunction(() => /직접 채워 주세�
   console.log(`  남은 항목 안내: ${filled.extract}`);
   console.log(`  다른 글 붙여넣기: ${pasted.verdict} — ${pasted.reasons.join(" / ")} (안내 ${pasted.guide ? "보임" : "숨김"})`);
   console.log(`  같은 글 다시 붙여넣기: [${repasted}]`);
+  if (errors.length) console.log("  ! 페이지 오류: " + errors.join(" | "));
+  if (!ok) gateFailures++;
+  await page.close();
+}
+
+// 연도 + 아티스트로 공식 공연 찾기: "2026 하늘빛" → 그해 공연 3건(지난 공연 포함) → 고르면 상세를 받아 비교
+{
+  const page = await context.newPage();
+  const errors = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await page.goto(base + "/index.html");
+  await page.click("#primaryBtn"); await page.click("#optConcert"); await page.click("#primaryBtn"); await page.click("#primaryBtn");
+  await page.fill("#kopisQuery", "2026 하늘빛");
+  await page.click("#kopisFindBtn");
+  await page.waitForFunction(() => document.querySelectorAll("#kopisCandidates .kopis-cand").length === 3, null, { timeout: 15000 });
+  const list = await page.evaluate(() => ({ status: document.getElementById("kopisStatus").textContent,
+    items: Array.from(document.querySelectorAll("#kopisCandidates .kopis-cand")).map((b) => b.innerText.replace(/\n+/g, " | ")) }));
+  await page.click("#kopisCandidates .kopis-cand:nth-child(1)");   // 2월 지난 공연
+  await page.waitForSelector("#kopisCompare:not([hidden]) .kopis-row", { timeout: 15000 });
+  const feb = await page.evaluate(() => Array.from(document.querySelectorAll(".kopis-row")).map((r) => r.querySelector(".kopis-label").textContent));
+  // 공연 일시를 넣고 다시 찾으면, 그날이 기간에 드는 서울 공연이 맨 위에 '공연일과 맞음'으로 나오고 바로 골라진다
+  await page.fill("#showDateInput", "2026-11-22T18:00");
+  await page.click("#kopisFindBtn");
+  await page.waitForSelector("#kopisCompare:not([hidden]) .kopis-row", { timeout: 15000 });
+  const withDate = await page.evaluate(() => ({ first: document.querySelector("#kopisCandidates .kopis-cand").innerText.replace(/\n+/g, " | "),
+    picked: (document.querySelector(".kopis-cand.picked") || {}).innerText || "" }));
+  await page.locator("#kopisCard").screenshot({ path: join(outDir, "kopis-year-search.png") });
+  const ok = /2026년 공연 3개를 찾았어요/.test(list.status) && /SPRING/.test(list.items[0]) && /2026-02-14/.test(list.items[0])
+    && /서울/.test(list.items[1]) && /부산/.test(list.items[2]) && feb.includes("정가")
+    && /서울/.test(withDate.first) && /공연일과 맞음/.test(withDate.first) && /서울/.test(withDate.picked) && !errors.length;
+  console.log(`\n■ 연도 + 아티스트로 공식 공연 찾기  ${ok ? "✓" : "✗"}`);
+  console.log(`  ${list.status}`);
+  list.items.forEach((t) => console.log("   · " + t));
+  console.log(`  공연일 넣고 다시 찾기: 맨 위 ${withDate.first.slice(0, 60)} / 고른 공연 ${withDate.picked.slice(0, 30)}`);
   if (errors.length) console.log("  ! 페이지 오류: " + errors.join(" | "));
   if (!ok) gateFailures++;
   await page.close();
