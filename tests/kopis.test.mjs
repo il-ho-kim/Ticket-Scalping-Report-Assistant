@@ -141,10 +141,16 @@ const blueHour = (u) => {
 const uniqKeywords = (calls) => [...new Set(calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams.get("shprfnm")))];
 
 test("검색어 나누기", () => {
-  assert.deepEqual(M.parseQuery("2026 실리카겔"), { year: 2026, phrase: "실리카겔", words: ["실리카겔"] });
-  assert.deepEqual(M.parseQuery("실리카겔 SILICA GEL 2025"), { year: 2025, phrase: "실리카겔 SILICA GEL", words: ["실리카겔", "SILICA", "GEL"] });
-  assert.deepEqual(M.parseQuery("EXO"), { year: null, phrase: "EXO", words: ["EXO"] });
+  assert.deepEqual(M.parseQuery("2026 실리카겔"), { year: 2026, phrase: "실리카겔", groups: ["실리카겔"] });
+  // 이어진 영문 낱말은 한 덩어리로 ("GEL"만 따로 찾으면 "ANGEL"까지 걸린다)
+  assert.deepEqual(M.parseQuery("실리카겔 SILICA GEL 2025"), { year: 2025, phrase: "실리카겔 SILICA GEL", groups: ["실리카겔", "SILICA GEL"] });
+  assert.deepEqual(M.parseQuery("2026 엑소 EXO"), { year: 2026, phrase: "엑소 EXO", groups: ["엑소", "EXO"] });
+  assert.deepEqual(M.parseQuery("EXO"), { year: null, phrase: "EXO", groups: ["EXO"] });
   assert.equal(M.parseQuery("  2026  ").phrase, "");
+  // 공연명에 실제로 들어 있는지 (실제 KOPIS 공연명)
+  assert.ok(M.titleHas("Silica Gel Asia Tour, Syn.THE.Size: Ballad of You [서울]", "SILICA GEL"));
+  assert.ok(M.titleHas("스페이스 공감, 장기하·실리카겔·한로로의 Homecoming Day", "실리카겔"));
+  assert.ok(!M.titleHas("ANGEL NOISE Haepi Is Happy Part 2 발매 파티", "SILICA GEL"));
 });
 
 test("연도 + 아티스트 검색: 그해 공연을 지난 공연까지 모두, 날짜순으로", async () => {
@@ -166,31 +172,36 @@ test("연도 + 아티스트 검색: 그해 공연을 지난 공연까지 모두,
   assert.match(r.headers["cache-control"], /s-maxage/);
 
   // 한글·영문 이름을 함께 넣으면 각각 찾아 합친다
-  const k2 = fakeKopis((u) => u.pathname.endsWith("/pblprfr") && u.searchParams.get("shprfnm") === "HANEULBIT" && u.searchParams.get("stdate").slice(4, 6) === "02" ? "list-haneulbit-feb.xml" : null);
+  const k2 = fakeKopis((u) => u.pathname.endsWith("/pblprfr") && u.searchParams.get("shprfnm") === "하늘빛" && u.searchParams.get("stdate").slice(4, 6) === "02" ? "list-haneulbit-feb.xml" : null);
   const r2 = await call(createHandler({ fetch: k2.fetch, getKey: () => "K" }), "/api/kopis?q=" + encodeURIComponent("2026 하늘빛 HANEULBIT"));
   assert.deepEqual(r2.body.results.map((p) => p.id), ["PF900003"]);
-  assert.deepEqual(uniqKeywords(k2.calls), ["하늘빛 HANEULBIT", "하늘빛", "HANEULBIT"]);
+  assert.deepEqual(uniqKeywords(k2.calls), ["하늘빛", "HANEULBIT"]);
+
+  // KOPIS가 비슷한 이름도 함께 돌려줘도, 공연명에 검색어가 실제로 들어간 것만 남긴다
+  const k3 = fakeKopis((u) => u.pathname.endsWith("/pblprfr") && u.searchParams.get("stdate").slice(4, 6) === "11" ? "list-blue-hour.xml" : null);
+  const r4 = await call(createHandler({ fetch: k3.fetch, getKey: () => "K" }), "/api/kopis?q=" + encodeURIComponent("2026 부산"));
+  assert.deepEqual(r4.body.results.map((p) => p.id), ["PF900002"]);
 
   // 검색어가 없으면 안내
   const r3 = await call(h, "/api/kopis?q=2026");
   assert.equal(r3.body.error, "no_query");
 });
 
-test("연도 검색: 동시에 3개까지만 부르고, 거절되면 한 번 더 부른다", async () => {
+test("연도 검색: 동시에 2개까지만 부르고, 거절되면 다시 부른다", async () => {
   let active = 0, peak = 0, calls = 0;
   const fetch = async (url) => {
     calls++; active++; peak = Math.max(peak, active);
     await new Promise((r) => setTimeout(r, 5));
     active--;
-    // 3월 조회는 처음 한 번 거절(503)
-    if (/stdate=20260301/.test(url) && !fetch.retried){ fetch.retried = true; return { ok: false, status: 503, text: async () => "busy" }; }
+    // 3월 조회는 처음 두 번 거절(400 — KOPIS는 연달아 부르면 400으로 거절하기도 한다)
+    if (/stdate=20260301/.test(url) && (fetch.refused || 0) < 2){ fetch.refused = (fetch.refused || 0) + 1; return { ok: false, status: 400, text: async () => "busy" }; }
     return { ok: true, status: 200, text: async () => "<dbs></dbs>" };
   };
   const h = createHandler({ fetch, getKey: () => "K", retryDelayMs: 0 });
   const r = await call(h, "/api/kopis?q=" + encodeURIComponent("2026 하늘빛"));
   assert.equal(r.body.ok, true);
-  assert.ok(peak <= 3, "동시 요청 " + peak);
-  assert.equal(calls, 13);   // 12달 + 거절된 3월 한 번 더
+  assert.ok(peak <= 2, "동시 요청 " + peak);
+  assert.equal(calls, 14);   // 12달 + 거절된 3월 두 번 더
 
   // 계속 거절되면 상태 코드를 알려준다 (원인 확인용)
   const h2 = createHandler({ fetch: async () => ({ ok: false, status: 429, text: async () => "" }), getKey: () => "K", retryDelayMs: 0 });

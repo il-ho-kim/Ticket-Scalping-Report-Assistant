@@ -280,18 +280,31 @@
     return rows;
   }
 
-  // 검색어 나누기: "2026 실리카겔 SILICA GEL" → {year: 2026, phrase: "실리카겔 SILICA GEL", words: ["실리카겔","SILICA","GEL"]}
+  // 검색어 나누기: "2026 실리카겔 SILICA GEL" → {year: 2026, phrase: "실리카겔 SILICA GEL", groups: ["실리카겔", "SILICA GEL"]}
+  //   groups: 한글 낱말은 하나씩, 이어진 영문·숫자 낱말은 한 덩어리로 ("SILICA GEL"을 "SILICA"·"GEL"로 쪼개면 "ANGEL"까지 걸린다)
   // 연도가 없으면 year는 null (부르는 쪽에서 올해로 본다)
   function parseQuery(q){
     var s = String(q || "").replace(/[\u0000-\u001f]/g, " ");
     var y = /(?:^|\D)(20\d{2})(?:\D|$)/.exec(s);
     var rest = (y ? s.replace(y[1], " ") : s).replace(/['"‘’“”<>〈〉《》\[\]()]/g, " ").replace(/\s+/g, " ").trim();
-    var words = rest.split(" ").filter(function(w){ return w.length >= 2; });
-    return { year: y ? Number(y[1]) : null, phrase: rest, words: words };
+    var groups = [], latin = [];
+    rest.split(" ").forEach(function(w){
+      if (!w) return;
+      if (/[가-힣]/.test(w)){ if (latin.length){ groups.push(latin.join(" ")); latin = []; } groups.push(w); }
+      else latin.push(w);
+    });
+    if (latin.length) groups.push(latin.join(" "));
+    groups = groups.filter(function(g, i, a){ return g.length >= 2 && a.indexOf(g) === i; });
+    return { year: y ? Number(y[1]) : null, phrase: rest, groups: groups };
+  }
+  // 공연명에 검색어가 실제로 들어 있는지 (띄어쓰기·기호·대소문자 무시)
+  function titleHas(title, keyword){
+    var k = norm(keyword);
+    return !!k && norm(title).indexOf(k) !== -1;
   }
 
   return {
-    parseQuery: parseQuery,
+    parseQuery: parseQuery, titleHas: titleHas,
     xmlTag: xmlTag, xmlBlocks: xmlBlocks, parseList: parseList, parseDetail: parseDetail, parseError: parseError,
     parsePrices: parsePrices, parseTimes: parseTimes, timesOn: timesOn, sessions: sessions, inPeriod: inPeriod,
     nameScore: nameScore, rankCandidates: rankCandidates, sameVenue: function(a, b){ return sameVenue(a, b) || sameVenue(a, venueName(b)); }, seatGrade: seatGrade, priceForGrade: priceForGrade,

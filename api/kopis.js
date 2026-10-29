@@ -17,8 +17,12 @@ const BASE = "http://www.kopis.or.kr/openApi/restful";
 const MAX_DETAILS = 5;
 const MAX_RESULTS = 60;
 const MAX_KEYWORDS = 4;
-const CONCURRENCY = 3;     // KOPIS는 한꺼번에 많이 부르면 거절한다 — 동시에 3개까지만
-const RETRY_DELAY_MS = 400;
+const CONCURRENCY = 2;     // KOPIS는 한꺼번에·연달아 많이 부르면 거절한다(400·429) — 동시에 2개까지만
+const RETRY_DELAY_MS = 600; // 거절되면 0.6초, 1.2초 쉬고 다시
+const RETRIES = 2;
+const CACHE_MS = 60 * 60 * 1000;
+// 같은 낱말·같은 달 목록은 1시간 동안 다시 부르지 않는다 (서버가 깨어 있는 동안)
+const listCache = new Map();
 
 // items를 limit개씩만 동시에 처리한다
 async function mapLimit(items, limit, fn) {
@@ -75,15 +79,17 @@ function createHandler(opts) {
   const doFetch = (opts && opts.fetch) || ((...a) => fetch(...a));
   const getKey = (opts && opts.getKey) || (() => process.env.KOPIS_API_KEY);
 
-  // 거절(429·5xx)이나 시간 초과면 잠깐 쉬고 한 번 더 부른다
+  // 거절(400·429·5xx)이나 시간 초과면 잠깐 쉬고 다시 부른다 (KOPIS는 연달아 부르면 400으로 거절하기도 한다)
   async function kopis(path, params) {
-    try {
-      return await kopisOnce(path, params);
-    } catch (e) {
-      const retryable = e.name === "AbortError" || (e.code === "kopis_http" && (e.status === 429 || e.status >= 500));
-      if (!retryable) throw e;
-      await new Promise((r) => setTimeout(r, (opts && opts.retryDelayMs != null) ? opts.retryDelayMs : RETRY_DELAY_MS));
-      return kopisOnce(path, params);
+    const base = (opts && opts.retryDelayMs != null) ? opts.retryDelayMs : RETRY_DELAY_MS;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await kopisOnce(path, params);
+      } catch (e) {
+        const retryable = e.name === "AbortError" || (e.code === "kopis_http" && (e.status === 400 || e.status === 429 || e.status >= 500));
+        if (!retryable || attempt >= RETRIES) throw e;
+        await new Promise((r) => setTimeout(r, base * (attempt + 1)));
+      }
     }
   }
   async function kopisOnce(path, params) {
@@ -105,17 +111,25 @@ function createHandler(opts) {
 
   // 한 낱말로 한 해 전체를 찾는다: 한 달씩 12번 동시에 부르고, 같은 공연(ID)은 하나로 합친다
   async function searchYear(key, keyword, year) {
-    const lists = await mapLimit(yearWindows(year), CONCURRENCY, ([stdate, eddate]) =>
-      kopis("/pblprfr", { service: key, stdate, eddate, cpage: "1", rows: "100", shprfnm: keyword }).then(M.parseList));
+    const useCache = !(opts && opts.fetch);   // 테스트(가짜 KOPIS)에서는 기억해 두지 않는다
+    const lists = await mapLimit(yearWindows(year), CONCURRENCY, async ([stdate, eddate]) => {
+      const ck = keyword + "|" + stdate;
+      const hit = useCache && listCache.get(ck);
+      if (hit && Date.now() - hit.at < CACHE_MS) return hit.list;
+      const list = M.parseList(await kopis("/pblprfr", { service: key, stdate, eddate, cpage: "1", rows: "100", shprfnm: keyword }));
+      if (useCache) listCache.set(ck, { at: Date.now(), list });
+      return list;
+    });
     const byId = new Map();
     lists.flat().forEach((p) => { if (!byId.has(p.id)) byId.set(p.id, p); });
     return [...byId.values()];
   }
   // 여러 낱말: 낱말마다 찾아 합친다 (한글·영문 이름을 함께 넣으면 둘 다 찾는다)
-  async function searchKeywords(key, keywords, year, stopWhenFound) {
+  // strict: 공연명에 그 낱말이 실제로 들어간 것만 남긴다 (KOPIS는 비슷한 이름도 함께 돌려준다)
+  async function searchKeywords(key, keywords, year, stopWhenFound, strict) {
     const byId = new Map();
     for (const k of keywords) {
-      (await searchYear(key, k, year)).forEach((p) => { if (!byId.has(p.id)) byId.set(p.id, p); });
+      (await searchYear(key, k, year)).forEach((p) => { if (!byId.has(p.id) && (!strict || M.titleHas(p.title, k))) byId.set(p.id, p); });
       if (stopWhenFound && byId.size) break;
     }
     return [...byId.values()];
@@ -169,12 +183,12 @@ function createHandler(opts) {
     // 연도 + 아티스트 검색: 그해 공연 목록 (상세는 고를 때 ?id= 로)
     if (q.has("q")) {
       const pq = M.parseQuery((q.get("q") || "").slice(0, 80));
-      const keywords = [pq.phrase, ...pq.words].filter((k, i, a) => k && k.length >= 2 && a.indexOf(k) === i).slice(0, MAX_KEYWORDS);
+      const keywords = pq.groups.slice(0, 3);
       if (!keywords.length) return send(res, 400, { ok: false, error: "no_query", message: "아티스트나 공연 이름을 두 글자 이상 넣어주세요. 예: 2026 실리카겔" });
       if (!key) return send(res, 503, { ok: false, error: "no_key", message: "공식 정보 확인이 아직 설정되지 않았어요." });
       const year = pq.year || koreaToday().getFullYear();
       try {
-        const list = await searchKeywords(key, keywords, year, false);
+        const list = await searchKeywords(key, keywords, year, false, true);
         list.sort((a, b) => String(a.from).localeCompare(String(b.from)) || String(a.title).localeCompare(String(b.title)));
         return send(res, 200, { ok: true, query: { year, keywords }, total: list.length, results: list.slice(0, MAX_RESULTS) }, true);
       } catch (e) {
