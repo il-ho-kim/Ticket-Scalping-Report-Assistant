@@ -1285,6 +1285,9 @@
       if (!kopis.picked){
         msg = kopis.mode === "list"
           ? ((kopis.query && kopis.query.year) || "") + "년 공연 " + kopis.candidates.length + "개를 찾았어요. 맞는 공연을 골라주세요."
+            // 한글로만 찾으면 영문 이름으로 등록된 공연(예: "Silica Gel Asia Tour …")은 빠진다
+            + (kopis.query && kopis.query.groups.length && kopis.query.groups.every(function(g){ return /[가-힣]/.test(g); })
+              ? " 찾는 공연이 없으면 영문 이름도 함께 넣어 보세요. 예: 2026 실리카겔 SILICA GEL" : "")
           : "비슷한 공연이 " + kopis.candidates.length + "개 있어요. 맞는 공연을 골라주세요.";
       }
       else if (!kopis.picked.prices){ msg = kopis.message || "고른 공연의 공식 정보를 받는 중이에요..."; }
