@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const M = require("../js/kopis-match.js");
-const { createHandler, searchPeriod, yearWindows } = require("../api/kopis.js");
+const { createHandler, searchPeriod } = require("../api/kopis.js");
 const fx = (name) => readFileSync(new URL(`./fixtures/kopis/${name}`, import.meta.url), "utf8");
 
 test("공연목록·상세 XML 정리", () => {
@@ -154,31 +154,32 @@ test("검색어 나누기", () => {
 });
 
 test("연도 + 아티스트 검색: 그해 공연을 지난 공연까지 모두, 날짜순으로", async () => {
-  // 가상 아티스트 '하늘빛'의 2026년 공연 3건: 2월(지난 공연), 11월 서울, 12월 부산 — 달마다 다른 목록을 돌려준다
+  // 가상 아티스트 '하늘빛'의 2026년 공연 3건: 2월(지난 공연), 11월 서울, 12월 부산
   const k = fakeKopis((u) => {
     if (!u.pathname.endsWith("/pblprfr")) return `detail-${u.pathname.split("/").pop()}.xml`;
-    if (!/하늘빛|HANEULBIT/.test(u.searchParams.get("shprfnm") || "")) return null;
-    const month = u.searchParams.get("stdate").slice(4, 6);
-    return month === "02" ? "list-haneulbit-feb.xml" : (month === "11" || month === "12") ? "list-blue-hour.xml" : null;
+    return /하늘빛|HANEULBIT/.test(u.searchParams.get("shprfnm") || "") ? "list-haneulbit-2026.xml" : null;
   });
   const h = createHandler({ fetch: k.fetch, getKey: () => "K" });
   const r = await call(h, "/api/kopis?q=" + encodeURIComponent("2026 하늘빛"));
   assert.equal(r.status, 200);
   assert.equal(r.body.query.year, 2026);
-  assert.deepEqual(r.body.results.map((p) => p.id), ["PF900003", "PF900001", "PF900002"]);   // 날짜순, 11·12월에 겹쳐 나온 공연은 한 번만
+  assert.deepEqual(r.body.results.map((p) => p.id), ["PF900003", "PF900001", "PF900002"]);   // 날짜순
   assert.equal(r.body.results[0].from, "2026-02-14");
-  assert.equal(k.calls.filter((c) => c.includes("/pblprfr?")).length, 12);
+  // 한 낱말에 한 번: 1년 기간을 한 번에 조회한다 (KOPIS가 1년 기간도 받아 준다)
+  const listCalls = k.calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams);
+  assert.equal(listCalls.length, 1);
+  assert.deepEqual([listCalls[0].get("stdate"), listCalls[0].get("eddate"), listCalls[0].get("rows")], ["20260101", "20261231", "100"]);
   assert.ok(!k.calls.some((c) => /\/pblprfr\/PF/.test(c)), "목록 검색에서는 상세를 부르지 않는다");
   assert.match(r.headers["cache-control"], /s-maxage/);
 
-  // 한글·영문 이름을 함께 넣으면 각각 찾아 합친다
-  const k2 = fakeKopis((u) => u.pathname.endsWith("/pblprfr") && u.searchParams.get("shprfnm") === "하늘빛" && u.searchParams.get("stdate").slice(4, 6) === "02" ? "list-haneulbit-feb.xml" : null);
-  const r2 = await call(createHandler({ fetch: k2.fetch, getKey: () => "K" }), "/api/kopis?q=" + encodeURIComponent("2026 하늘빛 HANEULBIT"));
-  assert.deepEqual(r2.body.results.map((p) => p.id), ["PF900003"]);
-  assert.deepEqual(uniqKeywords(k2.calls), ["하늘빛", "HANEULBIT"]);
+  // 한글·영문 이름을 함께 넣으면 각각 찾아 합친다 (이어진 영문 낱말은 한 덩어리)
+  const k2 = fakeKopis((u) => u.pathname.endsWith("/pblprfr") && u.searchParams.get("shprfnm") === "하늘빛" ? "list-haneulbit-2026.xml" : null);
+  const r2 = await call(createHandler({ fetch: k2.fetch, getKey: () => "K" }), "/api/kopis?q=" + encodeURIComponent("2026 하늘빛 HANEUL BIT"));
+  assert.equal(r2.body.results.length, 3);
+  assert.deepEqual(uniqKeywords(k2.calls), ["하늘빛", "HANEUL BIT"]);
 
   // KOPIS가 비슷한 이름도 함께 돌려줘도, 공연명에 검색어가 실제로 들어간 것만 남긴다
-  const k3 = fakeKopis((u) => u.pathname.endsWith("/pblprfr") && u.searchParams.get("stdate").slice(4, 6) === "11" ? "list-blue-hour.xml" : null);
+  const k3 = fakeKopis((u) => u.pathname.endsWith("/pblprfr") ? "list-haneulbit-2026.xml" : null);
   const r4 = await call(createHandler({ fetch: k3.fetch, getKey: () => "K" }), "/api/kopis?q=" + encodeURIComponent("2026 부산"));
   assert.deepEqual(r4.body.results.map((p) => p.id), ["PF900002"]);
 
@@ -187,21 +188,20 @@ test("연도 + 아티스트 검색: 그해 공연을 지난 공연까지 모두,
   assert.equal(r3.body.error, "no_query");
 });
 
-test("연도 검색: 동시에 2개까지만 부르고, 거절되면 다시 부른다", async () => {
-  let active = 0, peak = 0, calls = 0;
+test("연도 검색: 한 쪽(100개)이 꽉 차면 다음 쪽까지, 거절되면 다시 부른다", async () => {
+  const item = (n) => `<db><mt20id>PF${800000 + n}</mt20id><prfnm>하늘빛 공연 ${n}</prfnm><prfpdfrom>2026.03.01</prfpdfrom><prfpdto>2026.03.01</prfpdto><fcltynm>가상홀</fcltynm></db>`;
+  let calls = 0, refused = 0;
   const fetch = async (url) => {
-    calls++; active++; peak = Math.max(peak, active);
-    await new Promise((r) => setTimeout(r, 5));
-    active--;
-    // 3월 조회는 처음 두 번 거절(400 — KOPIS는 연달아 부르면 400으로 거절하기도 한다)
-    if (/stdate=20260301/.test(url) && (fetch.refused || 0) < 2){ fetch.refused = (fetch.refused || 0) + 1; return { ok: false, status: 400, text: async () => "busy" }; }
-    return { ok: true, status: 200, text: async () => "<dbs></dbs>" };
+    calls++;
+    if (refused < 2){ refused++; return { ok: false, status: 400, text: async () => "busy" }; }   // 처음 두 번 거절(400)
+    const page = new URL(url).searchParams.get("cpage");
+    const xml = "<dbs>" + (page === "1" ? Array.from({ length: 100 }, (_, i) => item(i)) : [item(100)]).join("") + "</dbs>";
+    return { ok: true, status: 200, text: async () => xml };
   };
-  const h = createHandler({ fetch, getKey: () => "K", retryDelayMs: 0 });
-  const r = await call(h, "/api/kopis?q=" + encodeURIComponent("2026 하늘빛"));
+  const r = await call(createHandler({ fetch, getKey: () => "K", retryDelayMs: 0 }), "/api/kopis?q=" + encodeURIComponent("2026 하늘빛"));
   assert.equal(r.body.ok, true);
-  assert.ok(peak <= 2, "동시 요청 " + peak);
-  assert.equal(calls, 14);   // 12달 + 거절된 3월 두 번 더
+  assert.equal(r.body.total, 101);
+  assert.equal(calls, 4);   // 거절 2번 + 1쪽 + 2쪽
 
   // 계속 거절되면 상태 코드를 알려준다 (원인 확인용)
   const h2 = createHandler({ fetch: async () => ({ ok: false, status: 429, text: async () => "" }), getKey: () => "K", retryDelayMs: 0 });
@@ -220,13 +220,6 @@ test("공연 하나 상세 (?id=)", async () => {
   assert.equal((await call(h, "/api/kopis?id=../etc")).body.error, "bad_id");
 });
 
-test("한 해 검색 기간", () => {
-  const w = yearWindows(2026);
-  assert.equal(w.length, 12);
-  assert.deepEqual(w[1], ["20260201", "20260228"]);
-  assert.deepEqual(w[11], ["20261201", "20261231"]);
-});
-
 test("서버 함수: 공연 검색 → 후보 상세 정보", async () => {
   const k = fakeKopis(blueHour);
   const h = createHandler({ fetch: k.fetch, getKey: () => "TESTKEY" });
@@ -236,11 +229,10 @@ test("서버 함수: 공연 검색 → 후보 상세 정보", async () => {
   assert.equal(r.body.candidates[0].id, "PF900001");
   assert.equal(r.body.candidates[0].prices.length, 3);
   assert.match(r.headers["cache-control"], /s-maxage/);
-  // 공연일이 있는 해(2026)를 한 달씩 12번 나눠 찾는다
+  // 공연일이 있는 해(2026) 1년을 한 번에 찾는다
   const listCalls = k.calls.filter((c) => c.includes("/pblprfr?")).map((c) => new URL(c).searchParams);
-  assert.equal(listCalls.length, 12);
-  assert.deepEqual(listCalls.map((p) => p.get("stdate")).sort()[0], "20260101");
-  assert.ok(listCalls.some((p) => p.get("stdate") === "20261101" && p.get("eddate") === "20261130"));
+  assert.equal(listCalls.length, 1);
+  assert.deepEqual([listCalls[0].get("stdate"), listCalls[0].get("eddate")], ["20260101", "20261231"]);
   assert.ok(listCalls.every((p) => p.get("service") === "TESTKEY" && p.get("shprfnm") === "BLUE HOUR"));
   assert.ok(!JSON.stringify(r.body).includes("TESTKEY"), "응답에 키가 들어가면 안 된다");
 });

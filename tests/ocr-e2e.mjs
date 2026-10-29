@@ -25,12 +25,8 @@ const kopisHandler = createHandler({
   fetch: async (url) => {
     const u = new URL(url);
     let name = null;
-    // 가상 아티스트 '하늘빛'의 2026년 공연: 2월(지난 공연), 11월 서울, 12월 부산 — 연도 검색은 달마다 나눠 부른다
-    if (u.pathname.endsWith("/pblprfr")) {
-      const month = (u.searchParams.get("stdate") || "").slice(4, 6);
-      name = /BLUE|하늘빛|HANEULBIT/i.test(u.searchParams.get("shprfnm") || "")
-        ? (month === "02" ? "list-haneulbit-feb.xml" : (month === "11" || month === "12") ? "list-blue-hour.xml" : null) : null;
-    }
+    // 가상 아티스트 '하늘빛'의 2026년 공연: 2월(지난 공연), 11월 서울, 12월 부산 — 연도 검색은 1년을 한 번에 조회한다
+    if (u.pathname.endsWith("/pblprfr")) name = /BLUE|하늘빛|HANEULBIT/i.test(u.searchParams.get("shprfnm") || "") ? "list-haneulbit-2026.xml" : null;
     else name = `detail-${u.pathname.split("/").pop()}.xml`;
     const f = name && join(fixtures, "kopis", name);
     return { ok: true, status: 200, text: async () => (f && existsSync(f) ? readFileSync(f, "utf8") : "<dbs></dbs>") };

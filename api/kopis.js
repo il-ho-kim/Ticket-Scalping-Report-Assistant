@@ -17,23 +17,12 @@ const BASE = "http://www.kopis.or.kr/openApi/restful";
 const MAX_DETAILS = 5;
 const MAX_RESULTS = 60;
 const MAX_KEYWORDS = 4;
-const CONCURRENCY = 2;     // KOPIS는 한꺼번에·연달아 많이 부르면 거절한다(400·429) — 동시에 2개까지만
-const RETRY_DELAY_MS = 600; // 거절되면 0.6초, 1.2초 쉬고 다시
+const RETRY_DELAY_MS = 600; // KOPIS는 연달아 부르면 400·429로 거절하기도 한다 — 0.6초, 1.2초 쉬고 다시
 const RETRIES = 2;
 const CACHE_MS = 60 * 60 * 1000;
-// 같은 낱말·같은 달 목록은 1시간 동안 다시 부르지 않는다 (서버가 깨어 있는 동안)
+// 같은 낱말·같은 해 목록은 1시간 동안 다시 부르지 않는다 (서버가 깨어 있는 동안)
 const listCache = new Map();
 
-// items를 limit개씩만 동시에 처리한다
-async function mapLimit(items, limit, fn) {
-  const out = new Array(items.length);
-  let next = 0;
-  async function worker() {
-    while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
-}
 const TIMEOUT_MS = 8000;
 
 function ymd(d) {
@@ -51,16 +40,8 @@ function searchPeriod(date) {
   const start = koreaToday(), end = new Date(start); end.setDate(end.getDate() + 30);
   return [ymd(start), ymd(end)];
 }
-// 한 해를 한 달씩 나눈 검색 기간 (KOPIS 목록 조회는 한 번에 볼 수 있는 기간이 짧다)
-function yearWindows(year) {
-  const out = [];
-  for (let m = 0; m < 12; m++) {
-    const last = new Date(year, m + 1, 0).getDate();
-    const mm = String(m + 1).padStart(2, "0");
-    out.push([`${year}${mm}01`, `${year}${mm}${String(last).padStart(2, "0")}`]);
-  }
-  return out;
-}
+const ROWS = 100;
+const MAX_PAGES = 3;   // 한 낱말로 최대 300개까지 (아티스트 이름 검색은 보통 한 쪽이면 충분하다)
 // 공연명이 길거나 일부가 틀리면 검색이 안 될 수 있어, 가장 긴 낱말로 한 번 더 찾는다
 function fallbackKeyword(title) {
   const words = String(title).replace(/['"‘’“”<>〈〉《》\[\]()]/g, " ").split(/\s+/).filter((w) => w.length >= 2);
@@ -109,20 +90,22 @@ function createHandler(opts) {
     }
   }
 
-  // 한 낱말로 한 해 전체를 찾는다: 한 달씩 12번 동시에 부르고, 같은 공연(ID)은 하나로 합친다
+  // 한 낱말로 한 해 전체를 찾는다. KOPIS는 1년 기간도 한 번에 조회해 준다(2026-10-29 점검 주소로 확인).
+  // 한 쪽(100개)이 꽉 차면 다음 쪽까지. 같은 낱말·같은 해 결과는 1시간 기억한다.
   async function searchYear(key, keyword, year) {
     const useCache = !(opts && opts.fetch);   // 테스트(가짜 KOPIS)에서는 기억해 두지 않는다
-    const lists = await mapLimit(yearWindows(year), CONCURRENCY, async ([stdate, eddate]) => {
-      const ck = keyword + "|" + stdate;
-      const hit = useCache && listCache.get(ck);
-      if (hit && Date.now() - hit.at < CACHE_MS) return hit.list;
-      const list = M.parseList(await kopis("/pblprfr", { service: key, stdate, eddate, cpage: "1", rows: "100", shprfnm: keyword }));
-      if (useCache) listCache.set(ck, { at: Date.now(), list });
-      return list;
-    });
+    const ck = keyword + "|" + year;
+    const hit = useCache && listCache.get(ck);
+    if (hit && Date.now() - hit.at < CACHE_MS) return hit.list;
     const byId = new Map();
-    lists.flat().forEach((p) => { if (!byId.has(p.id)) byId.set(p.id, p); });
-    return [...byId.values()];
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const list = M.parseList(await kopis("/pblprfr", { service: key, stdate: `${year}0101`, eddate: `${year}1231`, cpage: String(page), rows: String(ROWS), shprfnm: keyword }));
+      list.forEach((p) => { if (!byId.has(p.id)) byId.set(p.id, p); });
+      if (list.length < ROWS) break;
+    }
+    const out = [...byId.values()];
+    if (useCache) listCache.set(ck, { at: Date.now(), list: out });
+    return out;
   }
   // 여러 낱말: 낱말마다 찾아 합친다 (한글·영문 이름을 함께 넣으면 둘 다 찾는다)
   // strict: 공연명에 그 낱말이 실제로 들어간 것만 남긴다 (KOPIS는 비슷한 이름도 함께 돌려준다)
@@ -247,4 +230,3 @@ function failure(e) {
 module.exports = createHandler();
 module.exports.createHandler = createHandler;
 module.exports.searchPeriod = searchPeriod;
-module.exports.yearWindows = yearWindows;
