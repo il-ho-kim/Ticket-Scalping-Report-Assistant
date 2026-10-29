@@ -174,6 +174,20 @@ function createHandler(opts) {
         out.todayCount = list.length;
         out.sample = list.slice(0, 3).map((p) => p.title);
         out.message = "KOPIS 연결 정상이에요.";
+        // ?ping=1&range=1: 한 번에 조회할 수 있는 기간을 확인한다 (연도 검색 요청 수를 줄이기 위한 점검)
+        if (q.get("range")) {
+          const y = koreaToday().getFullYear();
+          out.range = {};
+          for (const [label, st, ed] of [["31일", `${y}0101`, `${y}0131`], ["92일", `${y}0101`, `${y}0402`], ["1년", `${y}0101`, `${y}1231`]]) {
+            try {
+              const list = M.parseList(await kopisOnce("/pblprfr", { service: key, stdate: st, eddate: ed, cpage: "1", rows: "100", shprfnm: "콘서트" }));
+              out.range[label] = { ok: true, count: list.length };
+            } catch (e) {
+              out.range[label] = { ok: false, status: e.status || null, message: e.message };
+            }
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
       } catch (e) {
         out.message = "KOPIS 연결 실패: " + (e.name === "AbortError" ? "응답 시간 초과" : e.message);
       }
