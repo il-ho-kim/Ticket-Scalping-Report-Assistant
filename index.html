@@ -210,11 +210,12 @@
   .code-fallback{ display:flex; align-items:center; justify-content:center; gap:8px; padding:8px 14px; border-radius:8px; border:1px solid var(--border); background:var(--surface); color:var(--text); font-size:15px; line-height:1.5; cursor:pointer; font-family:inherit; }
 
   .map-card{ border:1px solid var(--border); border-radius:12px; background:var(--surface); overflow:hidden; }
-  .map-row{ display:flex; align-items:center; gap:8px; padding:12px 16px; border-bottom:1px dashed var(--border); font-size:14px; }
+  .map-row{ display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px dashed var(--border); font-size:14px; }
   .map-row:last-child{ border-bottom:none; }
-  .map-box{ flex:1; color:var(--muted); }
-  .map-arrow{ color:var(--border); }
-  .map-target{ flex:1; font-weight:700; }
+  .map-text{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+  .map-target{ font-weight:700; }
+  .map-value{ font-size:15px; line-height:1.5; overflow-wrap:anywhere; }
+  .map-hint{ flex-shrink:0; font-size:12px; color:var(--muted); line-height:32px; }
 
   footer.ctabar{ padding:16px 16px 24px; border-top:1px solid var(--border); background:var(--bg); display:flex; flex-direction:column; gap:8px; }
   .btn-primary{ display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:12px 24px; border-radius:9999px; border:1.5px solid var(--accent); background:var(--accent); color:var(--accent-ink); font-family:'Pretendard', -apple-system, BlinkMacSystemFont, 'Malgun Gothic', sans-serif; font-weight:700; font-size:16px; line-height:1.5; cursor:pointer; }
@@ -370,6 +371,16 @@
           <p class="section-note">캡처에서 찾은 값은 자동으로 채우고, 못 찾은 값만 비워둬요. 자동으로 채운 값도 실제와 다를 수 있으니 한 번씩 확인해주세요.</p>
 
           <div class="field">
+            <div class="field-label-row"><span class="field-label">공연 유형 *</span></div>
+            <div class="chips" id="showTypeChips">
+              <button class="chip" data-showtype="S">음악(콘서트)</button>
+              <button class="chip" data-showtype="F">음악(페스티벌)</button>
+              <button class="chip" data-showtype="M">뮤지컬</button>
+              <button class="chip" data-showtype="C">클래식</button>
+              <button class="chip" data-showtype="E">기타</button>
+            </div>
+          </div>
+          <div class="field">
             <div class="field-label-row"><span class="field-label">공연명 *</span><span class="field-flag" id="flag-titleInput"></span></div>
             <input class="input" id="titleInput" placeholder="예: OOO 콘서트">
           </div>
@@ -379,7 +390,7 @@
               <input class="input" type="datetime-local" id="showDateInput">
             </div>
             <div class="field">
-              <div class="field-label-row"><span class="field-label">게시일시</span><span class="field-flag" id="flag-postDateInput"></span></div>
+              <div class="field-label-row"><span class="field-label">게시일시 *</span><span class="field-flag" id="flag-postDateInput"></span></div>
               <input class="input" type="datetime-local" id="postDateInput">
             </div>
           </div>
@@ -428,7 +439,7 @@
             <input class="input" id="vendorOtherInput" placeholder="예매처 이름을 입력하세요" hidden style="margin-top:6px;">
           </div>
           <div class="field">
-            <div class="field-label-row"><span class="field-label">판매자 계정 · 닉네임</span><span class="field-flag" id="flag-sellerInput"></span></div>
+            <div class="field-label-row"><span class="field-label">판매자 계정 · 닉네임 *</span><span class="field-flag" id="flag-sellerInput"></span></div>
             <input class="input" id="sellerInput" placeholder="예: @abcd1234">
           </div>
           <div class="field">
@@ -505,14 +516,16 @@
         <div class="fill-card">
           <span class="fill-title">자동 채우기 (반자동)</span>
           <ol class="fill-steps">
-            <li>아래 버튼을 <b>북마크바로 드래그</b>해서 저장하세요</li>
+            <li>아래 버튼을 <b>누르지 말고 북마크바로 끌어다 놓아</b> 저장하세요. 한 번만 저장하면 다음 신고에도 그대로 써요</li>
             <li>위에서 공식 사이트를 열고, <b>본인인증을 직접</b> 완료하세요</li>
-            <li>방금 만든 북마크를 클릭하면 아래 준비한 내용이 채워져요</li>
-            <li>내용을 확인하고 <b>직접 제출</b>하세요</li>
+            <li>이 화면에서 <b>[신고 내용 복사하기]</b>를 누르세요</li>
+            <li>공식 사이트에서 저장한 북마크를 누르고, 나오는 칸에 <b>붙여넣으세요</b></li>
+            <li>채우지 못한 칸이 있으면 알려드려요. 내용을 확인하고 <b>직접 제출</b>하세요</li>
           </ol>
           <a class="bookmarklet" id="bookmarkletLink" href="javascript:void(0)" draggable="true">📎 신고 내용 채우기</a>
-          <button class="code-fallback" id="copyBookmarkletCode">드래그가 안 되면 코드 복사하기</button>
-          <p class="fill-note">성명·휴대폰·이메일·본인인증·개인정보 동의 항목은 절대 자동으로 채우지 않고, 제출 버튼도 누르지 않아요. 공식 사이트의 화면 구조가 바뀌면 일부 항목이 채워지지 않을 수 있어요 — 그럴 땐 아래 대응표로 직접 옮겨주세요.</p>
+          <button class="code-fallback" id="copyBookmarkletCode">끌어다 놓기가 안 되면(휴대폰 등) 북마크 코드 복사하기</button>
+          <button class="code-fallback" id="copyFillData">신고 내용 복사하기</button>
+          <p class="fill-note">북마크에는 신고 내용이 저장되지 않아요. 성명·휴대폰·이메일·본인인증·개인정보 동의 항목은 절대 자동으로 채우지 않고, 제출 버튼도 누르지 않아요. 공식 사이트의 화면 구조가 바뀌면 일부 항목이 채워지지 않을 수 있어요 — 그럴 땐 아래 대응표로 직접 옮겨주세요.</p>
         </div>
 
         <span class="section-title">그래도 안 채워지면, 이렇게 옮기세요</span>
@@ -560,12 +573,14 @@
     verdict: null,
     platform: null,
     vendor: null,
-    files: [],       // {id, dataUrl, file}
+    showType: null,  // 공식 양식의 공연유형 코드 (S/F/M/C/E)
+    files: [],      // {id, dataUrl, file}
     autoFilled: {}    // fieldId -> true when value came from extraction and not yet edited
   };
 
   var PLATFORM_CODE = { "중고나라":"J", "번개장터":"B", "당근마켓":"D", "티켓베이":"T", "SNS":"S", "기타":"P" };
   var VENDOR_CODE = { "NOL티켓":"01", "YES24":"02", "티켓링크":"03", "멜론티켓":"04", "쿠팡플레이":"05", "기타":"06" };
+  var SHOW_TYPE_LABEL = { "S":"음악(콘서트)", "F":"음악(페스티벌)", "M":"뮤지컬", "C":"클래식", "E":"기타" };
 
   function $(sel, root){ return (root||document).querySelector(sel); }
   function $all(sel, root){ return Array.prototype.slice.call((root||document).querySelectorAll(sel)); }
@@ -1022,10 +1037,12 @@
       else { renderListing(); if (fieldVal("titleInput").length >= 2) kopisSearch({ auto: true }); else reportMissing(); }
     }, 350);
   }
-  var REQUIRED = [["titleInput", "공연명"], ["showDateInput", "공연 일시"], ["officialPriceInput", "정가"], ["saleInput", "판매 가격"],
-                  ["venueInput", "공연 장소"], ["platform", "거래 플랫폼"], ["vendor", "예매처"], ["urlInput", "게시글 URL"]];
+  var REQUIRED = [["showType", "공연 유형"], ["titleInput", "공연명"], ["showDateInput", "공연 일시"], ["postDateInput", "게시일시"],
+                  ["officialPriceInput", "정가"], ["saleInput", "판매 가격"], ["venueInput", "공연 장소"], ["platform", "거래 플랫폼"],
+                  ["vendor", "예매처"], ["sellerInput", "판매자 계정 · 닉네임"], ["urlInput", "게시글 URL"]];
   function reportMissing(){
     var missing = REQUIRED.filter(function(r){
+      if (r[0] === "showType") return !state.showType;
       if (r[0] === "platform") return !state.platform;
       if (r[0] === "vendor") return !state.vendor;
       return !fieldVal(r[0]);
@@ -1088,6 +1105,17 @@
     pickVendor(c.dataset.vendor, null);
   });
   $("#vendorOtherInput").addEventListener("input", updateFooter);
+
+  // 공연 유형: 공식 신고 양식의 필수 항목이라 직접 고른다
+  $("#showTypeChips").addEventListener("click", function(e){
+    var c = e.target.closest(".chip"); if (!c) return;
+    state.showType = c.dataset.showtype;
+    $all("#showTypeChips .chip").forEach(function(x){
+      x.classList.toggle("picked", x === c);
+      x.classList.toggle("manual-pick", x === c);
+    });
+    updateFooter();
+  });
 
   // ---------- 공식 공연 정보(KOPIS) 확인 ----------
   // 서버 함수(api/kopis.js)가 공연예술통합전산망을 대신 불러준다. 공식 정보와 다른 항목은
@@ -1572,8 +1600,10 @@
   renderKopis();
 
   function evidenceComplete(){
-    var need = ["titleInput","saleInput","urlInput","officialPriceInput","showDateInput","venueInput"];
+    // 공식 신고 양식에서 필수인 칸과 맞춘다 (게시일시 = 부정거래 일시, 판매자 = 부정거래 판매자정보)
+    var need = ["titleInput","saleInput","urlInput","officialPriceInput","showDateInput","venueInput","postDateInput","sellerInput"];
     for (var i=0;i<need.length;i++){ if (!document.getElementById(need[i]).value.trim()) return false; }
+    if (!state.showType) return false;
     if (!state.platform) return false;
     if (state.platform==="기타" && !$("#platformOtherInput").value.trim()) return false;
     if (!state.vendor) return false;
@@ -1676,6 +1706,7 @@
     var vendor = state.vendor === "기타" ? (fieldVal("vendorOtherInput")||"기타") : (state.vendor || "(예매처 미입력)");
 
     var rows = [
+      { label: "공연 유형", value: SHOW_TYPE_LABEL[state.showType] || "(유형 미선택)", src: null },
       { label: "공연명", value: title, src: state.autoFilled.titleInput },
       { label: "공연 일시", value: fmtDate(showDt)||"(일시 미입력)", src: state.autoFilled.showDateInput },
       { label: "장소", value: venue, src: state.autoFilled.venueInput },
@@ -1717,6 +1748,7 @@
       // raw category keys (never the display-formatted "기타(...)" strings above) — the
       // bookmarklet needs these exact values to look up PLATFORM_CODE/VENDOR_CODE
       platformKey: state.platform, vendorKey: state.vendor, vendorOther: fieldVal("vendorOtherInput"),
+      showType: state.showType,
       draft: draft
     };
   }
@@ -1739,71 +1771,150 @@
     document.body.removeChild(ta);
   }
   var toastTimer;
-  function showToast(msg){
+  function showToast(msg, ms){
     var t = $("#toast"); t.textContent = msg; t.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 1600);
+    toastTimer = setTimeout(function(){ t.classList.remove("show"); }, ms || 1600);
   }
 
   // ---------- step 6: handoff ----------
-  var MAP_ROWS = [
-    ["공연명","공연명"], ["공연 일시","공연일시"], ["정가","정가"], ["판매가","부정거래 가격"],
-    ["거래 플랫폼","거래경로(사이트)"], ["예매처","예매처"], ["좌석번호","좌석번호"], ["판매자 정보","부정거래 판매자정보"],
-    ["게시글 URL","부정거래 상세정보(링크주소)"], ["캡처 이미지","증빙자료 첨부"], ["초안 문구","신고내용"]
-  ];
-  function buildHandoff(){
-    var map = $("#mapCard"); map.innerHTML = "";
-    MAP_ROWS.forEach(function(pair){
-      var row = document.createElement("div"); row.className = "map-row";
-      row.innerHTML = '<span class="map-box"></span><span class="map-arrow">→</span><span class="map-target"></span>' +
-        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--good);flex-shrink:0"><path d="M4 12l5 5L20 6"/></svg>';
-      row.querySelector(".map-box").textContent = pair[0];
-      row.querySelector(".map-target").textContent = pair[1];
-      map.appendChild(row);
-    });
-    var href = "javascript:void(0)";
-    var code = "";
-    if (lastData){
-      code = buildBookmarkletCode(lastData);
-      href = "javascript:" + encodeURIComponent(code);
-    }
-    $("#bookmarkletLink").setAttribute("href", href);
-    $("#copyBookmarkletCode").onclick = function(){
-      if (!code){ showToast("먼저 4단계에서 정보를 입력해주세요"); return; }
-      copyText("javascript:" + encodeURIComponent(code));
+  // 북마크릿에는 신고 내용을 넣지 않는다(북마크에 남지 않게). 신고자가 [신고 내용 복사하기]로 복사한 글을
+  // 공식 화면에서 북마크를 누른 뒤 나오는 칸에 붙여넣으면 채운다. 북마크는 한 번 저장하면 계속 쓴다.
+  var FILL_MARK = "암표신고도우미:";
+  function digitsOnly(v){ return String(v||"").replace(/[^0-9]/g,""); }
+
+  function fillPayload(d){
+    return {
+      showType: d.showType || "", title: d.title, showDt: d.showDt, official: digitsOnly(d.official), sale: digitsOnly(d.sale),
+      postDt: d.postDt, seat: d.seat, platformCode: PLATFORM_CODE[d.platformKey] || "", vendorCode: VENDOR_CODE[d.vendorKey] || "",
+      vendorOther: d.vendorOther, seller: d.seller, url: d.url, draft: d.draft
     };
   }
 
-  function buildBookmarkletCode(d){
-    var payload = JSON.stringify({
-      title: d.title, sale: (d.sale||"").replace(/[^0-9]/g,""), official: (d.official||"").replace(/[^0-9]/g,""),
-      showDt: d.showDt, seat: d.seat, postDt: d.postDt, draft: d.draft,
-      platformCode: PLATFORM_CODE[d.platformKey] || "", vendorCode: VENDOR_CODE[d.vendorKey] || "",
-      vendorOther: d.vendorOther, url: d.url, seller: d.seller
-    });
-    var lines = [];
-    lines.push("(function(){");
-    lines.push("var d = " + payload + ";");
-    lines.push("function setVal(n,v){ var el=document.querySelector('[name=\"'+n+'\"]'); if(!el||v==null||v===''){return;} el.value=v; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); }");
-    lines.push("function setChk(n,v){ if(!v){return;} var el=document.querySelector('input[name=\"'+n+'\"][value=\"'+v+'\"]'); if(!el){return;} el.checked=true; el.dispatchEvent(new Event('change',{bubbles:true})); }");
-    lines.push("function setDate(n,v){ if(!v){return;} var el=document.querySelector('[name=\"'+n+'\"]'); if(!el){return;} var t=String(el.type||'').toLowerCase(); var s=v; if(t==='date'){ s=v.slice(0,10); } else if(t!=='datetime-local'){ s=v.replace('T',' '); } el.value=s; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); }");
-    lines.push("setVal('TITLE', d.title);");
-    lines.push("setDate('SHOW_DT', d.showDt);");
-    lines.push("setVal('PAYMENT_ORG', d.official);");
-    lines.push("setVal('PAYMENT_USE', d.sale);");
-    lines.push("setVal('INVALID_SEL_CNT', '1');");
-    lines.push("setDate('INVALID_SEL_DT', d.postDt);");
-    lines.push("setVal('SEAT_NUMBER', d.seat);");
-    lines.push("setVal('CONTENTS', d.draft);");
-    lines.push("setChk('PAY_SITE_TYPE_CD', d.platformCode);");
-    lines.push("setChk('TICKET_SITE_CD', d.vendorCode);");
-    lines.push("if (d.vendorCode==='06') setVal('ticetSiteText', d.vendorOther);");
-    lines.push("if (d.url){ setChk('SEL_INFO_TYPE_CD','04'); setVal('selInfoTypeCd04_item', d.url); }");
-    lines.push("if (d.seller){ setChk('INVALID_INFO_CD','02'); setVal('invalidInfoCd02_item', d.seller); }");
-    lines.push("alert('준비한 내용을 채웠어요. 성명, 휴대폰, 본인인증, 이메일, 동의 항목과 최종 제출은 직접 확인하고 진행해주세요.');");
-    lines.push("})();");
-    return lines.join("");
+  // 공식 신고 화면에서 실행되는 코드. 이 함수의 소스 그대로 북마크릿이 되므로 바깥 변수를 쓰지 않는다.
+  function fillOfficialForm(){
+    var MARK = "암표신고도우미:";
+    function q(s){ return document.querySelector(s); }
+    if (!q("#accusationForm") || !q('[name="TITLE"]')) {
+      alert("온라인 암표신고센터 신고 화면(ent.kocca.kr/ticket/receive.do)을 연 뒤에 이 북마크를 눌러 주세요.");
+      return;
+    }
+    var raw = prompt("암표 신고 준비 도우미 6단계에서 [신고 내용 복사하기]를 누른 뒤, 여기에 붙여넣어 주세요.", "");
+    if (raw == null) return;
+    var at = raw.indexOf(MARK), d = null;
+    if (at >= 0) { try { d = JSON.parse(raw.slice(at + MARK.length)); } catch (e) { d = null; } }
+    if (!d || typeof d !== "object") {
+      alert("붙여넣은 내용을 읽지 못했어요. 도우미 6단계에서 [신고 내용 복사하기]를 다시 누른 뒤 붙여넣어 주세요.");
+      return;
+    }
+    function byName(n){ return q('[name="' + n + '"]'); }
+    function fire(el, types){ types.forEach(function(t){ el.dispatchEvent(new Event(t, { bubbles: true })); }); }
+    function setVal(n, v){
+      var el = byName(n); if (!el || v == null || v === "") return;
+      var t = String(el.type || "").toLowerCase();
+      if (t === "date") v = String(v).slice(0, 10);
+      else if (/^\d{4}-\d{2}-\d{2}T/.test(v) && t !== "datetime-local") v = String(v).replace("T", " ");
+      el.value = v;
+      fire(el, ["input", "keyup", "change"]);
+    }
+    function pick(n, v){
+      if (!v) return;
+      var el = q('input[name="' + n + '"][value="' + v + '"]');
+      if (el && !el.checked && !el.disabled) el.click();   /* 클릭이어야 공식 화면이 숨긴 입력칸을 열어 준다 */
+    }
+    function val(n){ var el = byName(n); return el ? String(el.value || "").trim() : ""; }
+    function picked(n){ return !!q('input[name="' + n + '"]:checked'); }
+
+    pick("SHOW_TYPE", d.showType);
+    setVal("TITLE", d.title);
+    setVal("SHOW_DT", d.showDt);
+    setVal("PAYMENT_ORG", d.official);
+    pick("PAY_SITE_TYPE_CD", d.platformCode);
+    setVal("PAYMENT_USE", d.sale);
+    setVal("INVALID_SEL_CNT", "1");
+    setVal("INVALID_SEL_DT", d.postDt);
+    setVal("SEAT_NUMBER", d.seat);
+    pick("TICKET_SITE_CD", d.vendorCode);
+    if (d.vendorCode === "06") setVal("ticketSiteText", d.vendorOther);
+    if (d.seller) { pick("INVALID_INFO_CD", "02"); setVal("invalidInfoCd02_item", d.seller); }
+    if (d.url) { pick("SEL_INFO_TYPE_CD", "04"); setVal("selInfoTypeCd04_item", d.url); }
+    setVal("CONTENTS", d.draft);
+
+    var checks = [
+      ["공연유형", picked("SHOW_TYPE")], ["공연명", val("TITLE")], ["공연일시", val("SHOW_DT")], ["정가", val("PAYMENT_ORG")],
+      ["거래경로(사이트)", picked("PAY_SITE_TYPE_CD")], ["부정거래 가격", val("PAYMENT_USE")], ["부정거래 수량", val("INVALID_SEL_CNT")],
+      ["부정거래 일시", val("INVALID_SEL_DT")], ["예매처", picked("TICKET_SITE_CD") && (d.vendorCode !== "06" || val("ticketSiteText"))],
+      ["부정거래 판매자정보", picked("INVALID_INFO_CD") && val("invalidInfoCd02_item")],
+      ["부정거래 상세정보(링크주소)", val("selInfoTypeCd04_item")], ["신고내용", val("CONTENTS")]
+    ];
+    if (d.seat) checks.push(["좌석번호", val("SEAT_NUMBER")]);
+    var miss = checks.filter(function(c){ return !c[1]; }).map(function(c){ return c[0]; });
+    var msg;
+    if (miss.length === checks.length) {
+      msg = "채운 칸이 없어요. 공식 사이트의 화면 구조가 바뀌었을 수 있어요. 도우미 6단계의 대응표를 보고 직접 옮겨 주세요.";
+    } else {
+      msg = miss.length ? "일부만 채웠어요. 이 칸은 직접 채워 주세요: " + miss.join(", ") : "준비한 내용을 모두 채웠어요.";
+      var len = val("CONTENTS").length;
+      if (len > 500) msg += "\n\n신고내용이 " + len + "자예요. 공식 양식은 500자까지라 줄여 주세요.";
+      msg += "\n\n성명·휴대폰·본인인증·이메일·동의 항목, 증빙자료(캡처) 첨부, 최종 제출은 직접 해 주세요.";
+    }
+    alert(msg);
   }
+  var BOOKMARKLET_HREF = "javascript:" + encodeURIComponent("(" + fillOfficialForm.toString() + ")();");
+
+  // 공식 양식 순서대로: 옮길 값과 복사 버튼. 공식 화면에서 골라야 하는 칸은 "직접 골라요"로 표시한다.
+  function mapRows(d){
+    var vendorOther = d.vendorKey === "기타";
+    return [
+      { target: "공연유형", value: SHOW_TYPE_LABEL[d.showType] || "미선택", hint: "직접 골라요" },
+      { target: "공연명", value: d.title, copy: d.title },
+      { target: "공연일시", value: fmtDate(d.showDt), hint: "직접 골라요" },
+      { target: "정가", value: fmtWon(d.official), copy: digitsOnly(d.official) },
+      { target: "거래경로(사이트)", value: d.platform, hint: "직접 골라요" },
+      { target: "부정거래 가격", value: fmtWon(d.sale), copy: digitsOnly(d.sale) },
+      { target: "부정거래 수량", value: "1매", copy: "1" },
+      { target: "부정거래 일시", value: fmtDate(d.postDt), hint: "직접 골라요" },
+      { target: "좌석번호", value: d.seat || "모르면 비워 둬요", copy: d.seat },
+      { target: "예매처", value: vendorOther ? "기타 · " + d.vendor : d.vendor, copy: vendorOther ? d.vendorOther : "", hint: "직접 골라요" },
+      { target: "부정거래 판매자정보 · 계정", value: d.seller, copy: d.seller },
+      { target: "부정거래 상세정보 · 링크주소", value: d.url, copy: d.url },
+      { target: "신고내용", value: "초안 전체 (" + d.draft.length + "자)", copy: d.draft },
+      { target: "증빙 자료", value: "캡처 파일", hint: "직접 첨부해요" }
+    ];
+  }
+
+  function buildHandoff(){
+    var map = $("#mapCard"); map.innerHTML = "";
+    if (lastData) mapRows(lastData).forEach(function(r){
+      var row = document.createElement("div"); row.className = "map-row";
+      row.innerHTML = '<div class="map-text"><span class="map-target"></span><span class="map-value"></span></div>';
+      row.querySelector(".map-target").textContent = r.target;
+      row.querySelector(".map-value").textContent = r.value;
+      if (r.copy){
+        var btn = document.createElement("button");
+        btn.className = "copy-btn"; btn.title = r.target + " 복사";
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
+        btn.addEventListener("click", function(){ copyText(r.copy, btn); });
+        row.appendChild(btn);
+      } else {
+        var hint = document.createElement("span"); hint.className = "map-hint"; hint.textContent = r.hint || "";
+        row.appendChild(hint);
+      }
+      map.appendChild(row);
+    });
+  }
+
+  $("#bookmarkletLink").setAttribute("href", BOOKMARKLET_HREF);
+  // 이 화면에서 누르면 채울 곳이 없다: 실행하지 않고 저장 방법을 알려준다(끌어다 놓기는 그대로 된다)
+  $("#bookmarkletLink").addEventListener("click", function(e){
+    e.preventDefault();
+    showToast("이 버튼은 누르지 말고 북마크바로 끌어다 놓아 저장해요. 휴대폰은 [북마크 코드 복사하기]를 써요.", 4000);
+  });
+  $("#copyBookmarkletCode").addEventListener("click", function(){ copyText(BOOKMARKLET_HREF); });
+  $("#copyFillData").addEventListener("click", function(){
+    if (!lastData){ showToast("먼저 4단계에서 정보를 입력해주세요"); return; }
+    copyText(FILL_MARK + JSON.stringify(fillPayload(lastData)));
+  });
 
   // ---------- init ----------
   showStep(1);

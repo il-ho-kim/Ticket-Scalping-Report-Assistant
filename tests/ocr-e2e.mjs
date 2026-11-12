@@ -169,14 +169,20 @@ for (const c of cases) {
   if (c.files[0] === "bunjang.png" && c.files.length === 1) await page.screenshot({ path: join(outDir, "step4-bunjang.png"), fullPage: true });
 
   if (c.flow) {
-    // 이후 단계가 그대로 동작하는지: URL을 직접 넣고 5단계(초안) → 6단계(북마크릿)
+    // 이후 단계가 그대로 동작하는지: 공연 유형을 고르고 URL·판매자(비어 있으면)를 직접 넣고 5단계(초안) → 6단계(북마크릿)
+    await page.click('[data-showtype="S"]');
     await page.fill("#urlInput", "https://example.com/post/123");
+    if (!(await page.inputValue("#sellerInput"))) await page.fill("#sellerInput", "@sample_seller");
+    if (!(await page.inputValue("#postDateInput"))) await page.fill("#postDateInput", "2026-10-08T12:00");
     await page.click("#primaryBtn");
     const draft = await page.inputValue("#draftText");
     await page.click("#primaryBtn");
     const href = await page.getAttribute("#bookmarkletLink", "href");
-    const okFlow = draft.includes("고척스카이돔") && draft.includes("https://example.com/post/123") && href.startsWith("javascript:(function");
-    console.log(`  ${okFlow ? "✓" : "✗"} 5·6단계: 초안 ${draft.length}자, 북마크릿 ${href.length}자`);
+    const mapRows = await page.$$eval("#mapCard .map-row", (rows) => rows.length);
+    // 북마크릿은 신고 내용을 담지 않는다 (신고 내용은 [신고 내용 복사하기]로 붙여넣는다)
+    const okFlow = draft.includes("고척스카이돔") && draft.includes("https://example.com/post/123") && href.startsWith("javascript:(function")
+      && !decodeURIComponent(href).includes("고척스카이돔") && mapRows > 10;
+    console.log(`  ${okFlow ? "✓" : "✗"} 5·6단계: 초안 ${draft.length}자, 북마크릿 ${href.length}자, 대응표 ${mapRows}줄`);
     if (!okFlow) gateFailures++;
   }
   await page.close();
@@ -222,7 +228,7 @@ const waitAutoDone = (page) => page.waitForFunction(() => /직접 채워 주세�
   }));
   // 연도 검색이라 그해 공연 3건(2월 지난 공연 포함)이 후보로 나온다
   const ok = before.cands === 3 && /서울/.test(before.picked) && before.rows.every((r) => r.endsWith("같음"))
-    && /공식 정보로 1개 항목을 고쳤어요/.test(before.status) && /직접 채워 주세요: 게시글 URL$/.test(before.extract)
+    && /공식 정보로 1개 항목을 고쳤어요/.test(before.status) && /직접 채워 주세요: 공연 유형, 판매자 계정 · 닉네임, 게시글 URL$/.test(before.extract)
     && before.title === "하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울" && before.flag === "공식 정보로 고침"
     && afterAll.venue === "벡스코 오디토리움" && afterAll.venueFlag === "공식 정보로 고침" && afterAll.show === "2026-12-13T19:00"
     && !/추정/.test(afterAll.body) && !errors.length;
@@ -277,7 +283,7 @@ const waitAutoDone = (page) => page.waitForFunction(() => /직접 채워 주세�
     && filled.official === "154000" && filled.sale === "250000"
     && filled.venue === "고척스카이돔" && filled.venueFlag === "판매글에서 확인"
     && filled.seat === "플로어 R석 A구역 12열 7번" && filled.seatFlag === "판매글에서 확인" && filled.platform === "티켓베이"
-    && /직접 채워 주세요: 예매처$/.test(filled.extract)   // 가상 공연은 공식 예매처가 둘이라 사용자가 고른다
+    && /직접 채워 주세요: 공연 유형, 예매처, 판매자 계정 · 닉네임$/.test(filled.extract)   // 공연 유형은 늘 직접 고르고, 가상 공연은 공식 예매처가 둘이라 사용자가 고른다. 판매글에는 판매자가 나오지 않는다
     && pasted.verdict === "캡처와 다른 글이에요" && pasted.reasons.some((r) => /판매가가 달라요/.test(r)) && pasted.guide && pasted.flag === ""
     && repasted === "캡처와 대조함" && !/추정/.test(body) && !errors.length;
   console.log(`\n■ 버튼 한 번으로 채우기(티켓베이)  ${ok ? "✓" : "✗"}`);
