@@ -1207,7 +1207,7 @@
         kopis.query.year = (b.query && b.query.year) || kopis.query.year;
         kopis.status = list.length ? "ready" : "none";
         kopis.debug = "연도 검색 " + list.length + "개" + (b.total > list.length ? " (전체 " + b.total + "개)" : "");
-        var only = autoPick(list, date);
+        var only = autoPick(list, date, true);   // 서버가 공연명에 검색어가 든 것만 돌려준다
         if (only){ renderKopis(); kopisPick(only); return; }
       }
       renderKopis(); renderDiag();
@@ -1259,10 +1259,14 @@
     return n;
   }
   // 후보가 하나뿐이거나, 입력한 공연일이 기간 안에 드는 후보가 하나뿐이면 바로 고른다
-  function autoPick(list, date){
-    if (list.length === 1) return list[0];
+  // 자동으로 고쳐도 될 만큼 확실한 공연 하나. 이름이 입력한 공연과 이어지지 않으면(연도만 겹치는 등) 고르지 않고 후보만 보여준다.
+  // nameChecked: 연도+아티스트 검색 결과처럼 이미 공연명에 검색한 이름이 든 것만 왔으면 이름은 다시 보지 않는다.
+  function autoPick(list, date, nameChecked){
+    var hints = state.listingHints || {};
+    var related = nameChecked ? list : list.filter(function(p){ return KopisMatch.nameRelated(p, fieldVal("titleInput"), hints.alts || []); });
+    if (related.length === 1 && list.length === 1) return related[0];
     if (!date) return null;
-    var inside = list.filter(function(p){ return KopisMatch.inPeriod(date, p); });
+    var inside = related.filter(function(p){ return KopisMatch.inPeriod(date, p); });
     return inside.length === 1 ? inside[0] : null;
   }
   function kopisShow(key, v){

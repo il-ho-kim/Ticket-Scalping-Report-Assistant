@@ -302,9 +302,22 @@
     var k = norm(keyword);
     return !!k && norm(title).indexOf(k) !== -1;
   }
+  // 공연명의 낱말 중 이름으로 쓸 수 있는 것: 기호를 떼고, 숫자뿐인 낱말(연도 등)은 뺀다. "악뮤 2027 -고양" → ["악뮤", "고양"]
+  function nameWords(title){
+    return String(title || "").replace(/['"‘’“”<>〈〉《》\[\]()「」『』\-–—_:·.,!?~|\/]/g, " ").split(/\s+/)
+      .filter(function(w){ return w.length >= 2 && /[^\d]/.test(w); });
+  }
+  // 후보 공연이 입력한 공연과 이름으로 이어지는지: 이름이 꽤 비슷하거나, 첫 낱말(보통 아티스트)이나 다른 이름(영문명 등)이 공식 공연명에 들어 있을 때.
+  // 연도처럼 숫자만 겹치는 공연(예: "악뮤 2027" ↔ "… (2026.11~2027.02)")은 이어진 것으로 보지 않는다.
+  function nameRelated(perf, title, alts){
+    if (!perf) return false;
+    if (nameScore(title, perf.title) >= 0.6) return true;
+    var keys = nameWords(title).slice(0, 1).concat(alts || []);
+    return keys.some(function(k){ return nameWords(k).length && titleHas(perf.title, k); });
+  }
 
   return {
-    parseQuery: parseQuery, titleHas: titleHas,
+    parseQuery: parseQuery, titleHas: titleHas, nameWords: nameWords, nameRelated: nameRelated,
     xmlTag: xmlTag, xmlBlocks: xmlBlocks, parseList: parseList, parseDetail: parseDetail, parseError: parseError,
     parsePrices: parsePrices, parseTimes: parseTimes, timesOn: timesOn, sessions: sessions, inPeriod: inPeriod,
     nameScore: nameScore, rankCandidates: rankCandidates, sameVenue: function(a, b){ return sameVenue(a, b) || sameVenue(a, venueName(b)); }, seatGrade: seatGrade, priceForGrade: priceForGrade,

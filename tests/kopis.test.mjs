@@ -248,6 +248,26 @@ test("서버 함수: 전체 이름으로 못 찾으면 가장 긴 낱말로 다�
   assert.deepEqual(uniqKeywords(k.calls), ["'BLUE' 콘서트", "BLUE"]);
 });
 
+test("서버 함수: 다시 찾을 때 연도 같은 숫자 낱말은 쓰지 않는다", async () => {
+  // "악뮤 2027 -고양"을 "2027"로 찾으면 공연명에 2027이 든 엉뚱한 공연(예: "… (2026.11~2027.02)")이 나온다
+  const k = fakeKopis(() => null);
+  const h = createHandler({ fetch: k.fetch, getKey: () => "K" });
+  await call(h, "/api/kopis?title=" + encodeURIComponent("악뮤 2027 -고양") + "&date=2027-01-02");
+  assert.deepEqual(uniqKeywords(k.calls), ["악뮤 2027 -고양", "악뮤"]);
+  assert.deepEqual(M.nameWords("악뮤 2027 -고양"), ["악뮤", "고양"]);
+});
+
+test("자동으로 고칠 공연은 이름이 이어져야 한다", () => {
+  const p = (title) => ({ title });
+  // 연도만 겹치는 공연은 아니다 (실제로 악뮤 캡처에서 클래식 공연이 골라졌던 경우)
+  assert.equal(M.nameRelated(p("삼익 자일러 아티스트 시리즈 Ⅱ. 교수와 제자 - 음악의 계보를 잇다 (2026.11~2027.02)"), "악뮤 2027 -고양", []), false);
+  assert.equal(M.nameRelated(p("자우림 단독 콘서트: MIDNIGHT EXPRESS 2026-2027 [대구]"), "악뮤 2027 -고양", []), false);
+  // 아티스트 이름이 들어 있거나 다른 이름(영문명)이 들어 있으면 이어진다
+  assert.equal(M.nameRelated(p("하늘빛 밴드 2026 전국투어 'BLUE HOUR' - 서울"), "하늘빛 2026 - 서울", []), true);
+  assert.equal(M.nameRelated(p("EXO PLANET #6 - EXhOrizon [dot]"), "엑소 2026 - 서울", ["EXO"]), true);
+  assert.equal(M.nameRelated(p("EXO PLANET #6 - EXhOrizon [dot]"), "엑소 2026 - 서울", []), false);
+});
+
 test("서버 함수: 중고거래 표기로 못 찾으면 다른 이름(영문명)으로, 그래도 없으면 그날 같은 공연장으로", async () => {
   // 실제 사례: 티켓베이 "엑소 2026 - 서울" ↔ KOPIS "EXO PLANET #6, EXhOrizon [dot]"
   const byAlt = fakeKopis((u) => u.pathname.endsWith("/pblprfr")

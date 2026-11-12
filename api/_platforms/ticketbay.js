@@ -124,7 +124,8 @@ function createClient(opts) {
   // 상품번호로 판매글 한 건
   async function getListing(id) {
     const r = await get(`/product/view/${encodeURIComponent(id)}`);
-    if (r.notFound || !r.data || !r.data.info) return null;
+    // 판매가 끝난 글은 페이지는 열리지만 판매글 대신 {code:"INVALID_ACCESS", message:"구매할 수 없는 상품입니다."}가 들어 있다
+    if (r.notFound || !r.data || !r.data.info || r.data.info.display_number == null) return null;
     return normalize(r.data.info, r.data.categoryInfo && r.data.categoryInfo.category_name, r.data.categoryInfo);
   }
 

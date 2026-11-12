@@ -193,6 +193,20 @@ test("서버 함수: 붙여넣은 주소 대조", async () => {
   assert.equal(home.body.error, "not_listing");
 });
 
+test("서버 함수: 판매가 끝난 글은 '찾을 수 없어요'로", async () => {
+  // 티켓베이는 판매가 끝난 글도 페이지를 열어 주고, 판매글 대신 안내만 넣어 둔다 (2026-11 실제 응답 모양)
+  const closed = '<html><body><script id="__NEXT_DATA__" type="application/json">' + JSON.stringify({
+    props: { pageProps: { info: { code: "INVALID_ACCESS", message: "구매할 수 없는 상품입니다.", data: null }, categoryInfo: {} } },
+    page: "/product/view/[id]", query: { id: "9000000000777" } }) + "</script></body></html>";
+  const fetch = async () => ({ ok: true, status: 200, text: async () => closed });
+  const h = createHandler({ fetch, delayMs: 0 });
+  const v = await call(h, Object.assign({ action: "verify", url: "https://www.ticketbay.co.kr/product/view/9000000000777" }, Q(CAPTURE)));
+  assert.equal(v.body.ok, false);
+  assert.equal(v.body.error, "not_found");
+  const s = await call(h, { action: "search", number: "9000000000777" });
+  assert.deepEqual(s.body.candidates, []);
+});
+
 test("서버 함수: 다른 주소로 넘기는 응답은 따라가지 않는다", async () => {
   const h = createHandler({ fetch: fakeTicketbay({ redirect: true }).fetch, delayMs: 0 });
   const r = await call(h, Object.assign({ action: "verify", url: "https://www.ticketbay.co.kr/product/view/9000000000001" }, Q(CAPTURE)));

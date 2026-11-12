@@ -43,9 +43,10 @@ function searchPeriod(date) {
 const ROWS = 100;
 const MAX_PAGES = 3;   // 한 낱말로 최대 300개까지 (아티스트 이름 검색은 보통 한 쪽이면 충분하다)
 // 공연명이 길거나 일부가 틀리면 검색이 안 될 수 있어, 가장 긴 낱말로 한 번 더 찾는다
+// 숫자뿐인 낱말(연도 등)은 쓰지 않는다: "악뮤 2027 -고양"에서 "2027"로 찾으면 이름에 2027이 든 엉뚱한 공연이 나온다
 function fallbackKeyword(title) {
-  const words = String(title).replace(/['"‘’“”<>〈〉《》\[\]()]/g, " ").split(/\s+/).filter((w) => w.length >= 2);
-  words.sort((a, b) => b.length - a.length);
+  const words = M.nameWords(title);
+  words.sort((a, b) => b.length - a.length);   // 길이가 같으면 앞 낱말(보통 아티스트)이 먼저
   return words[0] && words[0] !== title.trim() ? words[0] : null;
 }
 
